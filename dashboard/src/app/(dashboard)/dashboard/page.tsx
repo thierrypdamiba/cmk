@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api, type Memory, type Stats } from "@/lib/api";
 import { MemoryCard } from "@/components/memory-card";
 import { MemoryDetailPanel } from "@/components/memory-detail-panel";
 import { ClaimBanner } from "@/components/claim-banner";
+import { OnboardingModal } from "@/components/onboarding-modal";
 
 export default function TimelinePage() {
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -13,7 +14,7 @@ export default function TimelinePage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Memory | null>(null);
 
-  useEffect(() => {
+  const fetchData = useCallback(() => {
     Promise.all([api.memories(100), api.stats()])
       .then(([memRes, statsRes]) => {
         setMemories(memRes.memories);
@@ -22,6 +23,10 @@ export default function TimelinePage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleForget = async (id: string) => {
     try {
@@ -36,6 +41,7 @@ export default function TimelinePage() {
 
   return (
     <div>
+      <OnboardingModal onComplete={fetchData} />
       <ClaimBanner />
       <div className="flex items-center justify-between mb-10">
         <div>
@@ -139,6 +145,8 @@ function Loading() {
 }
 
 function ErrorState({ message }: { message: string }) {
+  const isCloud = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
   return (
     <div className="max-w-md mx-auto mt-24">
       <div
@@ -149,45 +157,69 @@ function ErrorState({ message }: { message: string }) {
           boxShadow: "var(--shadow-sm)",
         }}
       >
-        <h3 className="text-[16px] font-semibold mb-2">
-          Can&apos;t reach the backend
-        </h3>
-        <p className="text-[14px] leading-[1.6] mb-4" style={{ color: "var(--sage)" }}>
-          The dashboard needs the CMK API server running to display your
-          memories. This usually means the backend isn&apos;t started yet.
-        </p>
+        {isCloud ? (
+          <>
+            <h3 className="text-[16px] font-semibold mb-2">
+              Something went wrong
+            </h3>
+            <p className="text-[14px] leading-[1.6] mb-4" style={{ color: "var(--sage)" }}>
+              We couldn&apos;t load your memories. This is usually temporary.
+              Try refreshing the page.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 rounded-[var(--radius)] text-[14px] font-medium"
+              style={{
+                background: "var(--accent)",
+                color: "#fff",
+              }}
+            >
+              Refresh
+            </button>
+          </>
+        ) : (
+          <>
+            <h3 className="text-[16px] font-semibold mb-2">
+              Can&apos;t reach the backend
+            </h3>
+            <p className="text-[14px] leading-[1.6] mb-4" style={{ color: "var(--sage)" }}>
+              The dashboard needs the CMK API server running to display your
+              memories. This usually means the backend isn&apos;t started yet.
+            </p>
 
-        <p
-          className="text-[13px] font-medium mb-2"
-          style={{ color: "var(--sage)" }}
-        >
-          Run this in your terminal:
-        </p>
-        <div
-          className="rounded-[var(--radius-sm)] px-3.5 py-2.5 mb-4 font-mono text-[13px]"
-          style={{ background: "var(--code-bg)", color: "var(--code-fg)" }}
-        >
-          cmk serve --port 7749
-        </div>
+            <p
+              className="text-[13px] font-medium mb-2"
+              style={{ color: "var(--sage)" }}
+            >
+              Run this in your terminal:
+            </p>
+            <div
+              className="rounded-[var(--radius-sm)] px-3.5 py-2.5 mb-4 font-mono text-[13px]"
+              style={{ background: "var(--code-bg)", color: "var(--code-fg)" }}
+            >
+              cmk serve --port 7749
+            </div>
 
-        <p
-          className="text-[13px] leading-[1.6] mb-4"
-          style={{ color: "var(--dust)" }}
-        >
-          Then refresh this page. If you&apos;re still stuck, make sure CMK is
-          installed (<code className="font-mono">uv tool install claude-memory-kit</code>) and
-          check the{" "}
-          <a
-            href="https://github.com/thierrydamiba/claude-memory#faq"
-            className="underline underline-offset-2"
-            style={{ color: "var(--accent)" }}
-          >
-            FAQ
-          </a>
-          .
-        </p>
+            <p
+              className="text-[13px] leading-[1.6] mb-4"
+              style={{ color: "var(--dust)" }}
+            >
+              Then refresh this page. If you&apos;re still stuck, make sure CMK is
+              installed (<code className="font-mono">uv tool install claude-memory-kit</code>) and
+              check the{" "}
+              <a
+                href="https://github.com/thierrydamiba/claude-memory#faq"
+                className="underline underline-offset-2"
+                style={{ color: "var(--accent)" }}
+              >
+                FAQ
+              </a>
+              .
+            </p>
+          </>
+        )}
 
-        <details className="text-[12px]" style={{ color: "var(--dust)" }}>
+        <details className="text-[12px] mt-4" style={{ color: "var(--dust)" }}>
           <summary className="cursor-pointer hover:underline">
             Error details
           </summary>

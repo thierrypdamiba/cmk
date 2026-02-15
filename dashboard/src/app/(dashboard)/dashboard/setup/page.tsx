@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api, type SetupInfo } from "@/lib/api";
 
 interface CheckState {
@@ -12,6 +13,14 @@ interface CheckState {
 }
 
 export default function SetupPage() {
+  const router = useRouter();
+  const isCloud = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
+  useEffect(() => {
+    if (isCloud) router.replace("/dashboard");
+  }, [isCloud, router]);
+
+  if (isCloud) return null;
   const [setup, setSetup] = useState<SetupInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
