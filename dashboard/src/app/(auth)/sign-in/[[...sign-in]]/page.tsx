@@ -96,6 +96,7 @@ export default function SignInPage() {
                       "rounded-[10px] text-[14px] font-medium h-[40px] w-full",
                     socialButtonsBlockButtonText: "text-[14px] font-medium",
                     socialButtonsProviderIcon: "w-[18px] h-[18px]",
+                    badge: "hidden",
                     dividerLine: "bg-[var(--border)]",
                     dividerText: "text-[12px] uppercase tracking-wider",
                     formFieldLabel: "text-[12px] font-medium uppercase tracking-[0.06em]",
@@ -199,20 +200,8 @@ export default function SignInPage() {
           display: none !important;
         }
         .clerk-auth .cl-socialButtonsProviderButton__lastUsed::after,
-        .clerk-auth [data-last-used],
-        .clerk-auth .cl-badge,
-        .clerk-auth .cl-internal-badge,
-        .clerk-auth span[class*="lastUsed"],
-        .clerk-auth div[class*="lastUsed"],
-        .clerk-auth span[class*="badge"],
-        .clerk-auth span[class*="Badge"],
-        .clerk-auth [class*="cl-internal"][class*="badge"],
-        .clerk-auth .cl-socialButtonsBlockButton span:last-child:not([class*="Text"]):not([class*="Icon"]) {
+        .clerk-auth [data-last-used] {
           display: none !important;
-        }
-        .clerk-auth .cl-socialButtonsBlockButton {
-          position: relative !important;
-          overflow: hidden !important;
         }
         .clerk-auth .cl-socialButtonsBlockButton,
         .clerk-auth .cl-socialButtonsIconButton,
