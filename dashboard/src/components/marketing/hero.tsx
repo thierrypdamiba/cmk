@@ -1,162 +1,205 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-
-const INSTALL_CMD = "npx cmk init";
 
 const FEATURES = [
   { label: "5 memory gates", detail: "behavioral, relational, epistemic, promissory, correction" },
-  { label: "Local-first", detail: "SQLite + vector search on your machine" },
+  { label: "Local or cloud", detail: "SQLite locally, or sync across devices with an account" },
   { label: "MCP native", detail: "works with any MCP-compatible client" },
 ];
 
 export function Hero() {
+  const [copied, setCopied] = useState(false);
+
+  const installCmd = "uv tool install claude-memory-kit";
+
+  function handleCopy() {
+    navigator.clipboard.writeText(installCmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   return (
-    <section className="max-w-5xl mx-auto px-6 pt-28 pb-24">
-      {/* Headline */}
-      <h1
-        className="text-[48px] md:text-[72px] font-normal tracking-tight leading-[1.0] mb-6"
-        style={{
-          fontFamily: "var(--font-serif)",
-          animation: "drift-up 400ms ease 50ms both",
-        }}
-      >
-        Persistent memory
-        <br />
-        for Claude.
-      </h1>
-
-      {/* Subhead */}
-      <p
-        className="text-[18px] md:text-[20px] leading-[1.6] mb-12 max-w-2xl"
-        style={{
-          color: "var(--muted)",
-          animation: "drift-up 400ms ease 100ms both",
-        }}
-      >
-        Claude forgets everything between sessions. CMK fixes that. Your preferences,
-        decisions, and context persist across every conversation, automatically.
-      </p>
-
-      {/* CTAs */}
-      <div
-        className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-16"
-        style={{ animation: "drift-up 400ms ease 150ms both" }}
-      >
-        <Link
-          href="/sign-up"
-          className="px-7 py-3.5 rounded-[var(--radius)] text-[15px] font-medium"
-          style={{
-            background: "var(--foreground)",
-            color: "var(--background)",
-            transition: "opacity 140ms ease",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.opacity = "0.85";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.opacity = "1";
-          }}
-        >
-          Get started free
-        </Link>
-        <Link
-          href="/docs"
-          className="px-7 py-3.5 rounded-[var(--radius)] text-[15px] font-medium"
-          style={{
-            background: "transparent",
-            border: "1px solid var(--border)",
-            color: "var(--foreground)",
-            transition: "background 140ms ease",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--surface-hover)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-          }}
-        >
-          Read the docs
-        </Link>
-      </div>
-
-      {/* Terminal card */}
-      <div
-        className="rounded-[var(--radius-lg)] overflow-hidden"
-        style={{
-          border: "1px solid var(--border)",
-          boxShadow: "var(--shadow-md)",
-          animation: "drift-up 500ms ease 200ms both",
-        }}
-      >
-        {/* Terminal header */}
-        <div
-          className="flex items-center gap-2 px-4 py-3"
-          style={{
-            background: "var(--code-bg)",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <div className="flex gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#ef4444" }} />
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#eab308" }} />
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#22c55e" }} />
-          </div>
-          <span
-            className="ml-2 text-[12px] font-mono"
-            style={{ color: "rgba(255,255,255,0.35)" }}
+    <section className="max-w-6xl mx-auto px-6 pt-28 pb-24">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+        {/* Left: copy */}
+        <div>
+          <h1
+            className="text-[48px] md:text-[64px] font-normal tracking-tight leading-[1.0] mb-6"
+            style={{
+              fontFamily: "var(--font-serif)",
+              animation: "drift-up 400ms ease 50ms both",
+            }}
           >
-            terminal
-          </span>
+            Persistent memory
+            <br />
+            for Claude.
+          </h1>
+
+          <p
+            className="text-[18px] leading-[1.6] mb-10 max-w-lg"
+            style={{
+              color: "var(--muted)",
+              animation: "drift-up 400ms ease 100ms both",
+            }}
+          >
+            Claude forgets everything between sessions. CMK fixes that.
+            Your preferences, decisions, and context persist across
+            every conversation.
+          </p>
+
+          <div
+            className="flex flex-col sm:flex-row items-start gap-3"
+            style={{ animation: "drift-up 400ms ease 150ms both" }}
+          >
+            <Link
+              href="/sign-up"
+              className="px-6 py-3 rounded-[var(--radius)] text-[15px] font-medium"
+              style={{
+                background: "var(--foreground)",
+                color: "var(--background)",
+                transition: "opacity 140ms ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = "0.85";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = "1";
+              }}
+            >
+              Get started free
+            </Link>
+            <Link
+              href="/docs"
+              className="px-6 py-3 rounded-[var(--radius)] text-[15px] font-medium"
+              style={{
+                background: "transparent",
+                border: "1px solid var(--border)",
+                color: "var(--foreground)",
+                transition: "background 140ms ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--surface-hover)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              Read the docs
+            </Link>
+          </div>
         </div>
 
-        {/* Terminal body */}
-        <div
-          className="px-5 py-5 font-mono text-[13px] md:text-[14px] leading-[1.8]"
-          style={{ background: "var(--code-bg)", color: "var(--code-fg)" }}
-        >
-          <div>
-            <span style={{ color: "#22c55e" }}>$</span>{" "}
-            <span style={{ color: "#e7e5e4" }}>{INSTALL_CMD}</span>
-          </div>
-          <div style={{ color: "rgba(255,255,255,0.45)" }}>
-            Setting up Claude Memory Kit...
-          </div>
-          <div style={{ color: "rgba(255,255,255,0.45)" }}>
-            Created memory store at ~/.claude-memory/store
-          </div>
-          <div style={{ color: "rgba(255,255,255,0.45)" }}>
-            MCP server configured. Restart Claude to activate.
-          </div>
-          <div className="mt-3">
-            <span style={{ color: "#22c55e" }}>$</span>{" "}
-            <span style={{ color: "#e7e5e4" }}>claude</span>
-          </div>
-          <div className="mt-1">
-            <span style={{ color: "#60a5fa" }}>you:</span>{" "}
-            I always use tabs, not spaces. And my deploy target is Render.
-          </div>
-          <div className="mt-1">
-            <span style={{ color: "#a78bfa" }}>claude:</span>{" "}
-            Got it. I&apos;ll use tabs for indentation and target Render for deployments going forward.
-          </div>
-          <div className="mt-3" style={{ color: "rgba(255,255,255,0.25)" }}>
-            ── next session ──
-          </div>
-          <div className="mt-1">
-            <span style={{ color: "#60a5fa" }}>you:</span>{" "}
-            Set up the project config.
-          </div>
-          <div className="mt-1">
-            <span style={{ color: "#a78bfa" }}>claude:</span>{" "}
-            Done. Used tabs for indentation and added render.yaml for deployment.
+        {/* Right: install card */}
+        <div style={{ animation: "drift-up 500ms ease 200ms both" }}>
+          <div
+            className="rounded-[var(--radius-lg)] overflow-hidden"
+            style={{
+              border: "1px solid var(--border)",
+              boxShadow: "var(--shadow-md)",
+            }}
+          >
+            {/* Terminal header */}
+            <div
+              className="flex items-center gap-2 px-4 py-3"
+              style={{
+                background: "var(--code-bg)",
+                borderBottom: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <div className="flex gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#ef4444" }} />
+                <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#eab308" }} />
+                <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#22c55e" }} />
+              </div>
+              <span
+                className="ml-2 text-[12px] font-mono"
+                style={{ color: "rgba(255,255,255,0.35)" }}
+              >
+                quickstart
+              </span>
+            </div>
+
+            {/* Terminal body */}
+            <div
+              className="px-5 py-5 font-mono text-[13px] leading-[1.8]"
+              style={{ background: "var(--code-bg)", color: "var(--code-fg)" }}
+            >
+              {/* Step 1: install */}
+              <div style={{ color: "rgba(255,255,255,0.35)" }}># install</div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <span style={{ color: "#22c55e" }}>$</span>{" "}
+                  <span>{installCmd}</span>
+                </div>
+                <button
+                  onClick={handleCopy}
+                  className="shrink-0 px-2 py-1 rounded text-[11px]"
+                  style={{
+                    background: "rgba(255,255,255,0.08)",
+                    color: "rgba(255,255,255,0.5)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    cursor: "pointer",
+                    transition: "all 140ms ease",
+                  }}
+                >
+                  {copied ? "copied" : "copy"}
+                </button>
+              </div>
+
+              {/* Step 2: connect */}
+              <div className="mt-4" style={{ color: "rgba(255,255,255,0.35)" }}>
+                # connect to your account (get key at cmk.dev/dashboard/setup)
+              </div>
+              <div>
+                <span style={{ color: "#22c55e" }}>$</span>{" "}
+                <span>cmk init</span>{" "}
+                <span style={{ color: "rgba(255,255,255,0.35)" }}>your-api-key</span>
+              </div>
+
+              {/* Step 3: use */}
+              <div className="mt-4" style={{ color: "rgba(255,255,255,0.35)" }}>
+                # or just run locally, no account needed
+              </div>
+              <div>
+                <span style={{ color: "#22c55e" }}>$</span>{" "}
+                <span>claude</span>{" "}
+                <span style={{ color: "rgba(255,255,255,0.35)" }}>
+                  # CMK auto-activates as MCP server
+                </span>
+              </div>
+
+              {/* Demo */}
+              <div className="mt-5 pt-4" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                <div>
+                  <span style={{ color: "#60a5fa" }}>you:</span>{" "}
+                  I use tabs, not spaces. Deploy target is always Render.
+                </div>
+                <div className="mt-1">
+                  <span style={{ color: "#a78bfa" }}>claude:</span>{" "}
+                  Noted. I&apos;ll remember both preferences.
+                </div>
+                <div className="mt-3" style={{ color: "rgba(255,255,255,0.25)" }}>
+                  ── next session ──
+                </div>
+                <div className="mt-1">
+                  <span style={{ color: "#60a5fa" }}>you:</span>{" "}
+                  Set up the project config.
+                </div>
+                <div className="mt-1">
+                  <span style={{ color: "#a78bfa" }}>claude:</span>{" "}
+                  Done. Used tabs for indentation and added render.yaml.
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Feature strip */}
       <div
-        className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-10"
+        className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-16"
         style={{ animation: "drift-up 500ms ease 300ms both" }}
       >
         {FEATURES.map((f) => (
