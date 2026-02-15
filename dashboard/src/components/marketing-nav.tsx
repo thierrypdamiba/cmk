@@ -48,7 +48,7 @@ export function MarketingNav() {
             className="text-[15px] font-semibold tracking-tight"
             style={{ color: "var(--foreground)" }}
           >
-            CMK
+            Claude Memory Kit (CMK)
           </span>
         </Link>
 
