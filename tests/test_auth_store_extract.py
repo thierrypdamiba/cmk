@@ -12,57 +12,42 @@ from claude_memory_kit import extract as extract_module
 
 
 # ===========================================================================
-# auth.py -- missing lines: 39, 54, 58, 64-78, 83-105, 129-163, 171-178
+# auth.py -- missing lines for BetterAuth JWKS, verify_jwt_token, etc.
 # ===========================================================================
 
 
 class TestIsAuthEnabledTrue:
-    """Cover line 39: is_auth_enabled returns True."""
+    """Cover is_auth_enabled returns True when both URL and secret are set."""
 
-    def test_auth_enabled_with_frontend_api(self, monkeypatch):
-        monkeypatch.setenv("CLERK_SECRET_KEY", "sk_test_realkey123")
-        monkeypatch.setenv("CLERK_FRONTEND_API", "my-app.clerk.accounts.dev")
-        monkeypatch.setenv("CLERK_INSTANCE_ID", "")
-        monkeypatch.setattr(auth_module, "_jwk_client", None)
-        monkeypatch.setattr(auth_module, "_jwk_cache_time", 0)
-        assert auth_module.is_auth_enabled() is True
-
-    def test_auth_enabled_with_instance_id(self, monkeypatch):
-        monkeypatch.setenv("CLERK_SECRET_KEY", "sk_test_realkey123")
-        monkeypatch.setenv("CLERK_FRONTEND_API", "")
-        monkeypatch.setenv("CLERK_INSTANCE_ID", "ins_abc123")
+    def test_auth_enabled_both_set(self, monkeypatch):
+        monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev")
+        monkeypatch.setenv("BETTER_AUTH_SECRET", "real-secret-value")
         monkeypatch.setattr(auth_module, "_jwk_client", None)
         monkeypatch.setattr(auth_module, "_jwk_cache_time", 0)
         assert auth_module.is_auth_enabled() is True
 
 
 class TestGetJwksUrl:
-    """Cover lines 54 and 58: _get_jwks_url returns URL from CLERK_FRONTEND_API or CLERK_INSTANCE_ID."""
+    """Cover _get_jwks_url returns URL from BETTER_AUTH_URL."""
 
-    def test_jwks_url_from_frontend_api(self, monkeypatch):
-        monkeypatch.setenv("CLERK_FRONTEND_API", "my-app.clerk.accounts.dev")
-        monkeypatch.setenv("CLERK_INSTANCE_ID", "")
-        monkeypatch.setenv("CLERK_PUBLISHABLE_KEY", "")
+    def test_jwks_url_from_better_auth_url(self, monkeypatch):
+        monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev")
         url = auth_module._get_jwks_url()
-        assert url == "https://my-app.clerk.accounts.dev/.well-known/jwks.json"
+        assert url == "https://cmk.dev/api/auth/jwks"
 
-    def test_jwks_url_from_instance_id(self, monkeypatch):
-        monkeypatch.setenv("CLERK_FRONTEND_API", "")
-        monkeypatch.setenv("CLERK_INSTANCE_ID", "ins_abc123")
-        monkeypatch.setenv("CLERK_PUBLISHABLE_KEY", "")
+    def test_jwks_url_strips_trailing_slash(self, monkeypatch):
+        monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev/")
         url = auth_module._get_jwks_url()
-        assert url == "https://ins_abc123.clerk.accounts.dev/.well-known/jwks.json"
+        assert url == "https://cmk.dev/api/auth/jwks"
 
     def test_jwks_url_empty(self, monkeypatch):
-        monkeypatch.setenv("CLERK_FRONTEND_API", "")
-        monkeypatch.setenv("CLERK_INSTANCE_ID", "")
-        monkeypatch.setenv("CLERK_PUBLISHABLE_KEY", "")
+        monkeypatch.setenv("BETTER_AUTH_URL", "")
         url = auth_module._get_jwks_url()
         assert url == ""
 
 
 class TestGetJwkClient:
-    """Cover lines 64-78: _get_jwk_client caching, creation, and error handling."""
+    """Cover _get_jwk_client caching, creation, and error handling."""
 
     def test_returns_cached_client(self, monkeypatch):
         mock_client = MagicMock()
@@ -74,8 +59,7 @@ class TestGetJwkClient:
     def test_returns_none_when_no_url(self, monkeypatch):
         monkeypatch.setattr(auth_module, "_jwk_client", None)
         monkeypatch.setattr(auth_module, "_jwk_cache_time", 0)
-        monkeypatch.setenv("CLERK_FRONTEND_API", "")
-        monkeypatch.setenv("CLERK_INSTANCE_ID", "")
+        monkeypatch.setenv("BETTER_AUTH_URL", "")
         result = auth_module._get_jwk_client()
         assert result is None
 
@@ -83,12 +67,12 @@ class TestGetJwkClient:
     def test_creates_new_client(self, mock_pyjwk_cls, monkeypatch):
         monkeypatch.setattr(auth_module, "_jwk_client", None)
         monkeypatch.setattr(auth_module, "_jwk_cache_time", 0)
-        monkeypatch.setenv("CLERK_FRONTEND_API", "my-app.clerk.accounts.dev")
+        monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev")
         mock_pyjwk_cls.return_value = MagicMock()
         result = auth_module._get_jwk_client()
         assert result is not None
         mock_pyjwk_cls.assert_called_once_with(
-            "https://my-app.clerk.accounts.dev/.well-known/jwks.json",
+            "https://cmk.dev/api/auth/jwks",
             cache_keys=True,
         )
 
@@ -96,7 +80,7 @@ class TestGetJwkClient:
     def test_returns_none_on_exception(self, mock_pyjwk_cls, monkeypatch):
         monkeypatch.setattr(auth_module, "_jwk_client", None)
         monkeypatch.setattr(auth_module, "_jwk_cache_time", 0)
-        monkeypatch.setenv("CLERK_FRONTEND_API", "my-app.clerk.accounts.dev")
+        monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev")
         mock_pyjwk_cls.side_effect = Exception("network error")
         result = auth_module._get_jwk_client()
         assert result is None
@@ -104,28 +88,22 @@ class TestGetJwkClient:
     def test_cache_expired_refetches(self, monkeypatch):
         """When cache TTL has expired, _get_jwk_client should refetch."""
         monkeypatch.setattr(auth_module, "_jwk_client", MagicMock())
-        # Set cache time far in the past so it's expired
         monkeypatch.setattr(auth_module, "_jwk_cache_time", time.time() - 7200)
-        monkeypatch.setenv("CLERK_FRONTEND_API", "")
-        monkeypatch.setenv("CLERK_INSTANCE_ID", "")
-        # No URL available, so it should return None after expiry
+        monkeypatch.setenv("BETTER_AUTH_URL", "")
         result = auth_module._get_jwk_client()
         assert result is None
 
     def test_lock_double_check_returns_cached(self, monkeypatch):
         """Double-check inside lock returns cached client if refreshed by another thread."""
         mock_client = MagicMock()
-        # Set expired cache so the outer check passes
         monkeypatch.setattr(auth_module, "_jwk_client", None)
         monkeypatch.setattr(auth_module, "_jwk_cache_time", 0)
-        monkeypatch.setenv("CLERK_FRONTEND_API", "my-app.clerk.accounts.dev")
-        # Simulate another thread refreshing the client between outer check and lock acquisition
+        monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev")
         original_lock = auth_module._jwk_lock
 
         class FakeContext:
             def __enter__(self_inner):
                 original_lock.__enter__()
-                # Simulate another thread having refreshed the client
                 auth_module._jwk_client = mock_client
                 auth_module._jwk_cache_time = time.time()
                 return self_inner
@@ -138,15 +116,14 @@ class TestGetJwkClient:
         assert result is mock_client
 
 
-class TestVerifyClerkToken:
-    """Cover lines 83-105: verify_clerk_token success, expired, invalid, and no client."""
+class TestVerifyJwtToken:
+    """Cover verify_jwt_token success, expired, invalid, and no client."""
 
     def test_returns_none_when_no_client(self, monkeypatch):
         monkeypatch.setattr(auth_module, "_jwk_client", None)
         monkeypatch.setattr(auth_module, "_jwk_cache_time", 0)
-        monkeypatch.setenv("CLERK_FRONTEND_API", "")
-        monkeypatch.setenv("CLERK_INSTANCE_ID", "")
-        result = auth_module.verify_clerk_token("some-token")
+        monkeypatch.setenv("BETTER_AUTH_URL", "")
+        result = auth_module.verify_jwt_token("some-token")
         assert result is None
 
     @patch("claude_memory_kit.auth._get_jwk_client")
@@ -161,7 +138,7 @@ class TestVerifyClerkToken:
             "email": "test@example.com",
             "name": "Test User",
         }
-        result = auth_module.verify_clerk_token("valid-token")
+        result = auth_module.verify_jwt_token("valid-token")
         assert result == {
             "id": "user_123",
             "email": "test@example.com",
@@ -170,7 +147,7 @@ class TestVerifyClerkToken:
         mock_decode.assert_called_once_with(
             "valid-token",
             mock_signing_key.key,
-            algorithms=["RS256"],
+            algorithms=["RS256", "EdDSA"],
             options={"verify_aud": False},
         )
 
@@ -183,7 +160,7 @@ class TestVerifyClerkToken:
         mock_get_client.return_value = mock_client
         mock_client.get_signing_key_from_jwt.return_value = MagicMock()
         mock_decode.side_effect = jwt_lib.ExpiredSignatureError("expired")
-        result = auth_module.verify_clerk_token("expired-token")
+        result = auth_module.verify_jwt_token("expired-token")
         assert result is None
 
     @patch("claude_memory_kit.auth._get_jwk_client")
@@ -195,12 +172,12 @@ class TestVerifyClerkToken:
         mock_get_client.return_value = mock_client
         mock_client.get_signing_key_from_jwt.return_value = MagicMock()
         mock_decode.side_effect = jwt_lib.InvalidTokenError("bad token")
-        result = auth_module.verify_clerk_token("invalid-token")
+        result = auth_module.verify_jwt_token("invalid-token")
         assert result is None
 
 
 class TestGetCurrentUserAuthEnabled:
-    """Cover lines 129-163: get_current_user when auth IS enabled."""
+    """Cover get_current_user when auth IS enabled."""
 
     @pytest.mark.asyncio
     async def test_raises_401_no_token(self, monkeypatch):
@@ -242,70 +219,68 @@ class TestGetCurrentUserAuthEnabled:
             assert "invalid API key" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_clerk_jwt_valid_with_db(self, monkeypatch, db):
+    async def test_jwt_valid_with_db(self, monkeypatch, db):
         monkeypatch.setattr(auth_module, "is_auth_enabled", lambda: True)
         request = MagicMock()
         request.headers = {"authorization": "Bearer jwt-token-abc"}
 
         mock_verify = MagicMock(return_value={
-            "id": "clerk_user_1",
-            "email": "clerk@test.com",
-            "name": "Clerk User",
+            "id": "ba_user_1",
+            "email": "user@test.com",
+            "name": "Test User",
         })
-        monkeypatch.setattr(auth_module, "verify_clerk_token", mock_verify)
+        monkeypatch.setattr(auth_module, "verify_jwt_token", mock_verify)
         result = await auth_module.get_current_user(request, db)
-        assert result["id"] == "clerk_user_1"
-        assert result["email"] == "clerk@test.com"
+        assert result["id"] == "ba_user_1"
+        assert result["email"] == "user@test.com"
         assert result["plan"] == "free"
 
     @pytest.mark.asyncio
-    async def test_clerk_jwt_valid_with_stored_plan(self, monkeypatch, db):
+    async def test_jwt_valid_with_stored_plan(self, monkeypatch, db):
         monkeypatch.setattr(auth_module, "is_auth_enabled", lambda: True)
         request = MagicMock()
         request.headers = {"authorization": "Bearer jwt-token-abc"}
 
-        # Pre-create user with a plan in the db
-        db.upsert_user("clerk_user_2", "clerk2@test.com", "Clerk User 2")
-        # Manually update the plan
+        db.upsert_user("ba_user_2", "user2@test.com", "User 2")
         db.conn.execute(
-            "UPDATE users SET plan = ? WHERE id = ?", ("pro", "clerk_user_2")
+            "UPDATE users SET plan = ? WHERE id = ?", ("pro", "ba_user_2")
         )
         db.conn.commit()
 
         mock_verify = MagicMock(return_value={
-            "id": "clerk_user_2",
-            "email": "clerk2@test.com",
-            "name": "Clerk User 2",
+            "id": "ba_user_2",
+            "email": "user2@test.com",
+            "name": "User 2",
         })
-        monkeypatch.setattr(auth_module, "verify_clerk_token", mock_verify)
+        monkeypatch.setattr(auth_module, "verify_jwt_token", mock_verify)
         result = await auth_module.get_current_user(request, db)
-        assert result["id"] == "clerk_user_2"
+        assert result["id"] == "ba_user_2"
         assert result["plan"] == "pro"
 
     @pytest.mark.asyncio
-    async def test_clerk_jwt_valid_no_db(self, monkeypatch):
+    async def test_jwt_valid_no_db(self, monkeypatch):
         monkeypatch.setattr(auth_module, "is_auth_enabled", lambda: True)
         request = MagicMock()
         request.headers = {"authorization": "Bearer jwt-token-no-db"}
 
         mock_verify = MagicMock(return_value={
-            "id": "clerk_user_3",
-            "email": "clerk3@test.com",
+            "id": "ba_user_3",
+            "email": "user3@test.com",
             "name": "No DB User",
         })
-        monkeypatch.setattr(auth_module, "verify_clerk_token", mock_verify)
+        monkeypatch.setattr(auth_module, "verify_jwt_token", mock_verify)
         result = await auth_module.get_current_user(request, db=None)
-        assert result["id"] == "clerk_user_3"
+        assert result["id"] == "ba_user_3"
         assert result["plan"] == "free"
 
     @pytest.mark.asyncio
-    async def test_clerk_jwt_invalid_raises_401(self, monkeypatch):
+    async def test_jwt_invalid_raises_401(self, monkeypatch):
         monkeypatch.setattr(auth_module, "is_auth_enabled", lambda: True)
         request = MagicMock()
         request.headers = {"authorization": "Bearer bad-jwt-token"}
 
         mock_verify = MagicMock(return_value=None)
-        monkeypatch.setattr(auth_module, "verify_clerk_token", mock_verify)
+        monkeypatch.setattr(auth_module, "verify_jwt_token", mock_verify)
         with pytest.raises(HTTPException) as exc_info:
             await auth_module.get_current_user(request)
         assert exc_info.value.status_code == 401
@@ -313,7 +288,7 @@ class TestGetCurrentUserAuthEnabled:
 
 
 class TestOptionalAuthEnabled:
-    """Cover lines 171-178: optional_auth when auth IS enabled."""
+    """Cover optional_auth when auth IS enabled."""
 
     @pytest.mark.asyncio
     async def test_returns_none_no_token(self, monkeypatch):
@@ -353,7 +328,7 @@ class TestOptionalAuthEnabled:
 
 
 # ===========================================================================
-# store/__init__.py -- missing lines: 9-11, 14-15, 19-23, 27-29
+# store/__init__.py
 # ===========================================================================
 
 
@@ -362,7 +337,8 @@ class TestStoreInit:
 
     @patch("claude_memory_kit.store.QdrantStore")
     @patch("claude_memory_kit.store.SqliteStore")
-    def test_store_constructor(self, mock_sqlite_cls, mock_qdrant_cls):
+    def test_store_constructor(self, mock_sqlite_cls, mock_qdrant_cls, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "")
         from claude_memory_kit.store import Store
 
         store = Store("/tmp/test-store")
@@ -375,7 +351,8 @@ class TestStoreInit:
     @pytest.mark.asyncio
     @patch("claude_memory_kit.store.QdrantStore")
     @patch("claude_memory_kit.store.SqliteStore")
-    async def test_store_init(self, mock_sqlite_cls, mock_qdrant_cls):
+    async def test_store_init(self, mock_sqlite_cls, mock_qdrant_cls, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "")
         from claude_memory_kit.store import Store
 
         store = Store("/tmp/test-store")
@@ -385,7 +362,8 @@ class TestStoreInit:
 
     @patch("claude_memory_kit.store.QdrantStore")
     @patch("claude_memory_kit.store.SqliteStore")
-    def test_count_user_data(self, mock_sqlite_cls, mock_qdrant_cls):
+    def test_count_user_data(self, mock_sqlite_cls, mock_qdrant_cls, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "")
         from claude_memory_kit.store import Store
 
         store = Store("/tmp/test-store")
@@ -397,7 +375,8 @@ class TestStoreInit:
 
     @patch("claude_memory_kit.store.QdrantStore")
     @patch("claude_memory_kit.store.SqliteStore")
-    def test_migrate_user_data(self, mock_sqlite_cls, mock_qdrant_cls):
+    def test_migrate_user_data(self, mock_sqlite_cls, mock_qdrant_cls, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "")
         from claude_memory_kit.store import Store
 
         store = Store("/tmp/test-store")
@@ -410,12 +389,12 @@ class TestStoreInit:
 
 
 # ===========================================================================
-# extract.py -- missing lines: 39-59, 65-82, 97
+# extract.py
 # ===========================================================================
 
 
 class TestCallAnthropic:
-    """Cover lines 39-59: _call_anthropic success and failure paths."""
+    """Cover _call_anthropic success and failure paths."""
 
     @pytest.mark.asyncio
     @patch("claude_memory_kit.extract.get_model", return_value="claude-opus-4-6")
@@ -486,7 +465,7 @@ class TestCallAnthropic:
 
 
 class TestExtractMemories:
-    """Cover lines 65-82: extract_memories JSON parsing including fallback."""
+    """Cover extract_memories JSON parsing including fallback."""
 
     @pytest.mark.asyncio
     @patch("claude_memory_kit.extract._call_anthropic")
@@ -547,7 +526,7 @@ class TestConsolidateEntries:
 
 
 class TestRegenerateIdentity:
-    """Cover line 97: regenerate_identity calls _call_anthropic."""
+    """Cover regenerate_identity calls _call_anthropic."""
 
     @pytest.mark.asyncio
     @patch("claude_memory_kit.extract._call_anthropic")

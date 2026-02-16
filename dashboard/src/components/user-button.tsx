@@ -1,21 +1,21 @@
 "use client";
 
-import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
+import { authClient } from "@/lib/auth-client";
 import Link from "next/link";
 
 export function UserButton() {
-  const hasClerk = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  if (!hasClerk) return null;
+  const hasAuth = process.env.NEXT_PUBLIC_AUTH_ENABLED === "true";
+  if (!hasAuth) return null;
 
   return <AuthAwareButton />;
 }
 
 function AuthAwareButton() {
-  const { isSignedIn, isLoaded } = useAuth();
+  const { data: session, isPending } = authClient.useSession();
 
-  if (!isLoaded) return null;
+  if (isPending) return null;
 
-  if (!isSignedIn) {
+  if (!session) {
     return (
       <Link
         href="/sign-in"
@@ -37,12 +37,23 @@ function AuthAwareButton() {
   }
 
   return (
-    <ClerkUserButton
-      appearance={{
-        elements: {
-          avatarBox: "w-7 h-7",
-        },
-      }}
-    />
+    <div className="flex items-center gap-2">
+      <div
+        className="w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-medium"
+        style={{
+          background: "var(--surface-active)",
+          color: "var(--foreground)",
+        }}
+      >
+        {(session.user.name?.[0] || session.user.email?.[0] || "?").toUpperCase()}
+      </div>
+      <Link
+        href="/sign-out"
+        className="text-[12px]"
+        style={{ color: "var(--muted)" }}
+      >
+        Sign out
+      </Link>
+    </div>
   );
 }

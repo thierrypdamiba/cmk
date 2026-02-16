@@ -335,7 +335,7 @@ const USE_CASES = [
       "Deploy CMK as a memory service across your organization. Audit trails, access control, and full data sovereignty.",
     features: [
       "Self-hosted with full data control",
-      "Clerk auth integration for SSO",
+      "BetterAuth integration for SSO",
       "API key management per service",
       "Export and deletion for compliance",
     ],

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
-import { ClerkProvider } from "@clerk/nextjs";
 import { AuthProvider } from "@/components/auth-provider";
 import "./globals.css";
 
@@ -31,21 +30,16 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const hasClerk = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const hasAuth = process.env.NEXT_PUBLIC_AUTH_ENABLED === "true";
 
   const fontVars = `${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} antialiased`;
 
-  if (hasClerk) {
+  if (hasAuth) {
     return (
       <html lang="en">
-        <ClerkProvider
-            afterSignInUrl="/dashboard"
-            afterSignUpUrl="/dashboard"
-          >
-          <body className={fontVars}>
-            <AuthProvider>{children}</AuthProvider>
-          </body>
-        </ClerkProvider>
+        <body className={fontVars}>
+          <AuthProvider>{children}</AuthProvider>
+        </body>
       </html>
     );
   }

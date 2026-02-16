@@ -344,7 +344,7 @@ class TestCliAuthCoverageGaps:
         """default login URL construction."""
         monkeypatch.delenv("CMK_LOGIN_URL", raising=False)
         url = cli_auth._get_login_url()
-        assert "https://cmk.dev/login" in url
+        assert "https://cmk.dev/sign-in" in url
         assert f"redirect_uri=http://localhost:{cli_auth.CALLBACK_PORT}/callback" in url
 
     def test_get_login_url_custom(self, monkeypatch):

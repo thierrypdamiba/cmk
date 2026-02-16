@@ -45,6 +45,14 @@ def get_store_path() -> str:
     )
 
 
+def get_database_url() -> str | None:
+    """Return DATABASE_URL if set and non-placeholder, else None."""
+    url = os.getenv("DATABASE_URL", "")
+    if url and not url.startswith("<"):
+        return url
+    return None
+
+
 def get_qdrant_config() -> dict:
     """Return Qdrant connection config. Cloud if URL set, local otherwise."""
     url = os.getenv("QDRANT_URL", "")

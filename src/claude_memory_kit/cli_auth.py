@@ -15,8 +15,8 @@ CALLBACK_PORT = 9847  # localhost callback port for OAuth
 
 
 def _get_login_url() -> str:
-    """Build the Clerk login URL."""
-    base = os.getenv("CMK_LOGIN_URL", "https://cmk.dev/login")
+    """Build the BetterAuth login URL."""
+    base = os.getenv("CMK_LOGIN_URL", "https://cmk.dev/sign-in")
     return f"{base}?redirect_uri=http://localhost:{CALLBACK_PORT}/callback"
 
 
@@ -67,7 +67,7 @@ def get_team_id() -> str | None:
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
-    """Handle the OAuth callback from Clerk."""
+    """Handle the OAuth callback from BetterAuth."""
 
     result: dict | None = None
 
@@ -110,7 +110,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
 
 
 def do_login() -> None:
-    """Open browser for Clerk auth, wait for callback, save credentials."""
+    """Open browser for BetterAuth login, wait for callback, save credentials."""
     creds = load_credentials()
     if creds and creds.get("api_key"):
         click.echo(f"Already logged in as {creds.get('email', 'unknown')}.")

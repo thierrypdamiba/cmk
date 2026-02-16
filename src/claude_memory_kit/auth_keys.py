@@ -4,8 +4,6 @@ import hashlib
 import secrets
 import uuid
 
-from .store.sqlite import SqliteStore
-
 PREFIX = "cmk-sk-"
 
 
@@ -19,9 +17,7 @@ def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
-def create_api_key(
-    db: SqliteStore, user_id: str, name: str = ""
-) -> dict:
+def create_api_key(db, user_id: str, name: str = "") -> dict:
     """Create a new API key for a user. Returns the raw key (only time it's visible)."""
     raw = generate_api_key()
     key_id = str(uuid.uuid4())
@@ -38,9 +34,7 @@ def create_api_key(
     }
 
 
-def validate_api_key(
-    raw_key: str, db: SqliteStore | None
-) -> dict | None:
+def validate_api_key(raw_key: str, db) -> dict | None:
     """Validate an API key. Returns user dict or None."""
     if not db:
         return None
@@ -61,11 +55,11 @@ def validate_api_key(
     }
 
 
-def list_keys(db: SqliteStore, user_id: str) -> list[dict]:
+def list_keys(db, user_id: str) -> list[dict]:
     """List API keys for a user (masked, no raw keys)."""
     return db.list_api_keys(user_id)
 
 
-def revoke_key(db: SqliteStore, key_id: str, user_id: str) -> bool:
+def revoke_key(db, key_id: str, user_id: str) -> bool:
     """Revoke an API key."""
     return db.revoke_api_key(key_id, user_id)

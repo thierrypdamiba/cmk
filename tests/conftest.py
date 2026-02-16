@@ -5,14 +5,13 @@ import tempfile
 
 import pytest
 
-# Force local mode, no real API keys
+# Force local mode, no real API keys, no auth
 os.environ["QDRANT_URL"] = ""
 os.environ["QDRANT_API_KEY"] = ""
 os.environ["ANTHROPIC_API_KEY"] = ""
-os.environ["CLERK_SECRET_KEY"] = ""
-os.environ["CLERK_PUBLISHABLE_KEY"] = ""
-os.environ["CLERK_FRONTEND_API"] = ""
-os.environ["CLERK_INSTANCE_ID"] = ""
+os.environ["BETTER_AUTH_URL"] = ""
+os.environ["BETTER_AUTH_SECRET"] = ""
+os.environ["DATABASE_URL"] = ""
 
 
 @pytest.fixture

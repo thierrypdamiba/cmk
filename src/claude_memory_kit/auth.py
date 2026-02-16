@@ -1,4 +1,4 @@
-"""Clerk JWT verification and conditional auth for FastAPI."""
+"""BetterAuth JWT verification and conditional auth for FastAPI."""
 
 import os
 import time
@@ -11,8 +11,6 @@ import jwt
 from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, Request
 
-from .store.sqlite import SqliteStore
-
 log = logging.getLogger("cmk")
 
 _jwk_client: PyJWKClient | None = None
@@ -21,44 +19,23 @@ _JWK_CACHE_TTL = 3600  # 1 hour
 _jwk_lock = threading.Lock()
 
 
-def _get_clerk_config() -> dict:
-    return {
-        "publishable_key": os.getenv("CLERK_PUBLISHABLE_KEY", ""),
-        "secret_key": os.getenv("CLERK_SECRET_KEY", ""),
-    }
-
-
 def is_auth_enabled() -> bool:
-    cfg = _get_clerk_config()
-    if not cfg["secret_key"] or cfg["secret_key"].startswith("<"):
+    """Check if BetterAuth is configured (URL + secret)."""
+    url = os.getenv("BETTER_AUTH_URL", "")
+    secret = os.getenv("BETTER_AUTH_SECRET", "")
+    if not url or url.startswith("<"):
         return False
-    jwks_url = _get_jwks_url()
-    if not jwks_url:
-        log.warning(
-            "CLERK_SECRET_KEY set but CLERK_FRONTEND_API/CLERK_INSTANCE_ID missing. Auth disabled."
-        )
+    if not secret or secret.startswith("<"):
         return False
     return True
 
 
 def _get_jwks_url() -> str:
-    pk = _get_clerk_config()["publishable_key"]
-    # Extract frontend API from publishable key
-    # pk format: pk_test_xxx or pk_live_xxx
-    # JWKS URL: https://{frontend-api}/.well-known/jwks.json
-    # The frontend API domain is in the Clerk dashboard
-    clerk_domain = os.getenv(
-        "CLERK_FRONTEND_API",
-        # Fallback: derive from secret key domain
-        "",
-    )
-    if clerk_domain:
-        return f"https://{clerk_domain}/.well-known/jwks.json"
-    # Default Clerk JWKS endpoint pattern
-    instance_id = os.getenv("CLERK_INSTANCE_ID", "")
-    if instance_id:
-        return f"https://{instance_id}.clerk.accounts.dev/.well-known/jwks.json"
-    return ""
+    """Build the JWKS endpoint from BETTER_AUTH_URL."""
+    base = os.getenv("BETTER_AUTH_URL", "").rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/api/auth/jwks"
 
 
 def _get_jwk_client() -> PyJWKClient | None:
@@ -84,8 +61,8 @@ def _get_jwk_client() -> PyJWKClient | None:
             return None
 
 
-def verify_clerk_token(token: str) -> dict | None:
-    """Verify a Clerk JWT and return claims (sub, email, name)."""
+def verify_jwt_token(token: str) -> dict | None:
+    """Verify a BetterAuth JWT and return claims (sub, email, name)."""
     client = _get_jwk_client()
     if not client:
         return None
@@ -95,7 +72,7 @@ def verify_clerk_token(token: str) -> dict | None:
         claims = jwt.decode(
             token,
             signing_key.key,
-            algorithms=["RS256"],
+            algorithms=["RS256", "EdDSA"],
             options={"verify_aud": False},
         )
         return {
@@ -104,10 +81,10 @@ def verify_clerk_token(token: str) -> dict | None:
             "name": claims.get("name", ""),
         }
     except jwt.ExpiredSignatureError:
-        log.debug("clerk token expired")
+        log.debug("jwt token expired")
         return None
     except jwt.InvalidTokenError as e:
-        log.debug("clerk token invalid: %s", e)
+        log.debug("jwt token invalid: %s", e)
         return None
 
 
@@ -122,12 +99,12 @@ def _extract_bearer(request: Request) -> str | None:
 
 
 async def get_current_user(
-    request: Request, db: SqliteStore | None = None
+    request: Request, db=None
 ) -> dict:
     """FastAPI dependency. Returns user dict or raises 401.
 
-    If Clerk is not configured, returns local user (no auth needed).
-    Tries API key first (cmk-sk-...), then Clerk JWT.
+    If BetterAuth is not configured, returns local user (no auth needed).
+    Tries API key first (cmk-sk-...), then BetterAuth JWT.
     """
     if not is_auth_enabled():
         return LOCAL_USER
@@ -144,8 +121,8 @@ async def get_current_user(
             return result
         raise HTTPException(401, "invalid API key")
 
-    # Try Clerk JWT
-    claims = verify_clerk_token(token)
+    # Try BetterAuth JWT
+    claims = verify_jwt_token(token)
     if not claims:
         raise HTTPException(401, "invalid token")
 

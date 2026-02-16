@@ -1,34 +1,51 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
-const isPublicRoute = createRouteMatcher([
-  "/",
-  "/home(.*)",
-  "/product(.*)",
-  "/memory-model(.*)",
-  "/docs(.*)",
-  "/security(.*)",
-  "/dashboard(.*)",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/sign-out(.*)",
-  "/api/v1/synthesize",
-]);
+export function middleware(request: NextRequest) {
+  const authEnabled = process.env.NEXT_PUBLIC_AUTH_ENABLED === "true";
+  if (!authEnabled) return NextResponse.next();
 
-export default clerkMiddleware(async (auth, request) => {
-  const hasClerk = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  if (!hasClerk) return;
+  const { pathname } = request.nextUrl;
+
+  // Public routes that don't require auth
+  const publicPaths = [
+    "/",
+    "/home",
+    "/product",
+    "/memory-model",
+    "/docs",
+    "/security",
+    "/sign-in",
+    "/sign-up",
+    "/sign-out",
+    "/api/auth",
+    "/api/v1/synthesize",
+  ];
+  const isPublic = publicPaths.some(
+    (p) => pathname === p || pathname.startsWith(p + "/")
+  );
+  if (isPublic) return NextResponse.next();
+
+  // Allow dashboard pages through (auth check happens client-side)
+  if (pathname.startsWith("/dashboard")) return NextResponse.next();
+
+  // Check for session cookie (BetterAuth default name)
+  const sessionCookie =
+    request.cookies.get("better-auth.session_token") ||
+    request.cookies.get("__Secure-better-auth.session_token");
+
+  if (!sessionCookie) {
+    // Redirect signed-in check: if on landing page with session, go to dashboard
+    return NextResponse.next();
+  }
 
   // Redirect signed-in users from landing page to dashboard
-  const { userId } = await auth();
-  if (userId && request.nextUrl.pathname === "/") {
+  if (pathname === "/") {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  if (!isPublicRoute(request)) {
-    await auth.protect();
-  }
-});
+  return NextResponse.next();
+}
 
 export const config = {
   matcher: [

@@ -13,11 +13,11 @@ services:
         sync: false
       - key: JINA_API_KEY
         sync: false
-      - key: CLERK_SECRET_KEY
+      - key: DATABASE_URL
         sync: false
-      - key: CLERK_PUBLISHABLE_KEY
+      - key: BETTER_AUTH_URL
         sync: false
-      - key: CLERK_FRONTEND_API
+      - key: BETTER_AUTH_SECRET
         sync: false
       - key: CORS_ORIGINS
         value: https://cmk.dev,https://www.cmk.dev

@@ -257,22 +257,28 @@ class TestConfig:
 
 
 class TestAuth:
-    def test_is_auth_enabled_no_secret(self, monkeypatch):
-        monkeypatch.setenv("CLERK_SECRET_KEY", "")
+    def test_is_auth_enabled_no_url(self, monkeypatch):
+        monkeypatch.setenv("BETTER_AUTH_URL", "")
+        monkeypatch.setenv("BETTER_AUTH_SECRET", "some-secret")
         assert auth_module.is_auth_enabled() is False
 
     def test_is_auth_enabled_placeholder(self, monkeypatch):
-        monkeypatch.setenv("CLERK_SECRET_KEY", "<your-clerk-key>")
+        monkeypatch.setenv("BETTER_AUTH_URL", "<your-url>")
+        monkeypatch.setenv("BETTER_AUTH_SECRET", "some-secret")
         assert auth_module.is_auth_enabled() is False
 
-    def test_is_auth_enabled_no_frontend(self, monkeypatch):
-        monkeypatch.setenv("CLERK_SECRET_KEY", "sk_test_realkey123")
-        monkeypatch.setenv("CLERK_FRONTEND_API", "")
-        monkeypatch.setenv("CLERK_INSTANCE_ID", "")
+    def test_is_auth_enabled_no_secret(self, monkeypatch):
+        monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev")
+        monkeypatch.setenv("BETTER_AUTH_SECRET", "")
         # Reset the JWK client cache
         monkeypatch.setattr(auth_module, "_jwk_client", None)
         monkeypatch.setattr(auth_module, "_jwk_cache_time", 0)
         assert auth_module.is_auth_enabled() is False
+
+    def test_is_auth_enabled_both_set(self, monkeypatch):
+        monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev")
+        monkeypatch.setenv("BETTER_AUTH_SECRET", "real-secret-abc")
+        assert auth_module.is_auth_enabled() is True
 
     def test_extract_bearer_present(self):
         request = MagicMock()
@@ -299,14 +305,16 @@ class TestAuth:
 
     @pytest.mark.asyncio
     async def test_get_current_user_auth_disabled(self, monkeypatch):
-        monkeypatch.setenv("CLERK_SECRET_KEY", "")
+        monkeypatch.setenv("BETTER_AUTH_URL", "")
+        monkeypatch.setenv("BETTER_AUTH_SECRET", "")
         request = MagicMock()
         result = await auth_module.get_current_user(request)
         assert result["id"] == "local"
 
     @pytest.mark.asyncio
     async def test_optional_auth_disabled(self, monkeypatch):
-        monkeypatch.setenv("CLERK_SECRET_KEY", "")
+        monkeypatch.setenv("BETTER_AUTH_URL", "")
+        monkeypatch.setenv("BETTER_AUTH_SECRET", "")
         request = MagicMock()
         result = await auth_module.optional_auth(request)
         assert result["id"] == "local"

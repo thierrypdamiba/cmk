@@ -140,7 +140,7 @@ Impact:
 Recommendation:
 
 - Enforce issuer/audience checks with explicit config.
-- Validate and fail fast on incomplete Clerk configuration.
+- Validate and fail fast on incomplete BetterAuth configuration.
 - Add security-focused integration tests.
 
 ## Medium

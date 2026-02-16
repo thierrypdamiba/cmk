@@ -1,18 +1,17 @@
 "use client";
 
-import { useClerk } from "@clerk/nextjs";
+import { authClient } from "@/lib/auth-client";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 export default function SignOutPage() {
-  const { signOut } = useClerk();
   const router = useRouter();
 
   useEffect(() => {
-    signOut().then(() => {
+    authClient.signOut().then(() => {
       router.push("/");
     });
-  }, [signOut, router]);
+  }, [router]);
 
   return (
     <div

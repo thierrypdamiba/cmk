@@ -14,7 +14,7 @@ interface CheckState {
 
 export default function SetupPage() {
   const router = useRouter();
-  const isCloud = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const isCloud = process.env.NEXT_PUBLIC_AUTH_ENABLED === "true";
 
   useEffect(() => {
     if (isCloud) router.replace("/dashboard");

@@ -145,7 +145,7 @@ function Loading() {
 }
 
 function ErrorState({ message }: { message: string }) {
-  const isCloud = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const isCloud = process.env.NEXT_PUBLIC_AUTH_ENABLED === "true";
 
   return (
     <div className="max-w-md mx-auto mt-24">

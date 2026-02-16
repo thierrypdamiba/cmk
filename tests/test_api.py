@@ -602,7 +602,8 @@ def test_security_headers(client):
 
 def test_lifespan_runs(monkeypatch):
     """Lifespan context manager runs without error."""
-    monkeypatch.setenv("CLERK_SECRET_KEY", "")
+    monkeypatch.setenv("BETTER_AUTH_URL", "")
+    monkeypatch.setenv("BETTER_AUTH_SECRET", "")
     from claude_memory_kit.api.app import lifespan
     import asyncio
 
@@ -617,10 +618,9 @@ def test_lifespan_runs(monkeypatch):
 
 
 def test_lifespan_auth_warning(monkeypatch):
-    """Lifespan warns when CLERK_SECRET_KEY is set but no frontend."""
-    monkeypatch.setenv("CLERK_SECRET_KEY", "sk_test_real_key")
-    monkeypatch.setenv("CLERK_FRONTEND_API", "")
-    monkeypatch.setenv("CLERK_INSTANCE_ID", "")
+    """Lifespan warns when BETTER_AUTH_URL is set but secret is missing."""
+    monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev")
+    monkeypatch.setenv("BETTER_AUTH_SECRET", "")
     from claude_memory_kit.api.app import lifespan
     import asyncio
 
@@ -635,9 +635,9 @@ def test_lifespan_auth_warning(monkeypatch):
 
 
 def test_lifespan_auth_enabled(monkeypatch):
-    """Lifespan logs auth enabled when both keys are set."""
-    monkeypatch.setenv("CLERK_SECRET_KEY", "sk_test_real_key")
-    monkeypatch.setenv("CLERK_FRONTEND_API", "https://clerk.example.com")
+    """Lifespan logs auth enabled when both URL and secret are set."""
+    monkeypatch.setenv("BETTER_AUTH_URL", "https://cmk.dev")
+    monkeypatch.setenv("BETTER_AUTH_SECRET", "super_secret_key_32chars_long_xx")
     from claude_memory_kit.api.app import lifespan
     import asyncio
 

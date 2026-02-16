@@ -106,16 +106,3 @@ input::placeholder, textarea::placeholder {
   background: linear-gradient(135deg, #faf9f7 0%, #f5efe8 50%, #faf9f7 100%);
 }
 
-/* hide clerk "Last used" badge */
-.cl-badge,
-.cl-badge__lastUsed,
-[class*="cl-badge"],
-[class*="cl-internal"][class*="adge"] {
-  display: none !important;
-  visibility: hidden !important;
-  width: 0 !important;
-  height: 0 !important;
-  overflow: hidden !important;
-  position: absolute !important;
-  opacity: 0 !important;
-}

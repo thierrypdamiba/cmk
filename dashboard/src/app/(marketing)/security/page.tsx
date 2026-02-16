@@ -194,7 +194,7 @@ export default function SecurityPage() {
             </div>
           </div>
 
-          {/* Clerk */}
+          {/* BetterAuth */}
           <div
             className="rounded-[var(--radius)] p-6"
             style={{
@@ -213,15 +213,15 @@ export default function SecurityPage() {
                 className="text-[17px] font-semibold tracking-tight"
                 style={{ color: "var(--foreground)" }}
               >
-                Clerk (optional)
+                BetterAuth (optional)
               </h3>
             </div>
             <p
               className="text-[14px] leading-[1.6] mb-4"
               style={{ color: "var(--muted)" }}
             >
-              For the web dashboard, Clerk provides user authentication with
-              SSO, social login, and session management.
+              For the web dashboard, BetterAuth provides self-hosted user
+              authentication with social login and session management.
             </p>
             <div className="space-y-2">
               <FeatureRow text="SSO and social login support" />

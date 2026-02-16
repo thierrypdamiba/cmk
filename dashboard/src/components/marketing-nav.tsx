@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useAuth } from "@clerk/nextjs";
+import { authClient } from "@/lib/auth-client";
 
 const NAV_LINKS = [
   { href: "/product", label: "Product" },
@@ -12,8 +12,8 @@ const NAV_LINKS = [
 ];
 
 function AuthButton() {
-  const hasClerk = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  if (!hasClerk) {
+  const hasAuth = process.env.NEXT_PUBLIC_AUTH_ENABLED === "true";
+  if (!hasAuth) {
     return (
       <Link
         href="/sign-in"
@@ -35,15 +35,15 @@ function AuthButton() {
     );
   }
 
-  return <ClerkAuthButton />;
+  return <SessionAuthButton />;
 }
 
-function ClerkAuthButton() {
-  const { isSignedIn, isLoaded } = useAuth();
+function SessionAuthButton() {
+  const { data: session, isPending } = authClient.useSession();
 
-  if (!isLoaded) return null;
+  if (isPending) return null;
 
-  if (isSignedIn) {
+  if (session) {
     return (
       <Link
         href="/dashboard"

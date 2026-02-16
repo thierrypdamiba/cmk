@@ -27,9 +27,9 @@ I reviewed the core cloud/local backend paths (`api`, `auth`, `store`) and found
 ### 2) Auth enablement can result in guaranteed JWT failure
 - **Severity:** High
 - **Where:** `src/claude_memory_kit/auth.py`
-- **Why it matters:** `is_auth_enabled()` turns auth on when `CLERK_SECRET_KEY` is present, but `_get_jwks_url()` ignores that secret key and may return empty URL unless separate frontend env vars are set. In that state, JWT verification cannot start and every request requiring auth fails.
-- **Code evidence:** `is_auth_enabled()` depends on `secret_key`; `_get_jwks_url()` only checks `CLERK_FRONTEND_API` or `CLERK_INSTANCE_ID`.
-- **Runtime repro:** with only `CLERK_SECRET_KEY` set, `is_auth_enabled() == True` and `_get_jwks_url() == ''`.
+- **Why it matters:** `is_auth_enabled()` turns auth on when `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET` are present, but if only one is set, JWT verification cannot start and every request requiring auth fails.
+- **Code evidence:** `is_auth_enabled()` requires both `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET`; `_get_jwks_url()` derives URL from `BETTER_AUTH_URL`.
+- **Runtime repro:** with only `BETTER_AUTH_URL` set (no secret), `is_auth_enabled() == False` and auth is disabled with a warning.
 
 ### 3) Pin/unpin API state is not represented in returned models
 - **Severity:** Medium
@@ -49,7 +49,7 @@ I reviewed the core cloud/local backend paths (`api`, `auth`, `store`) and found
 
 1. Add an `AFTER UPDATE` trigger for `memories_fts` (or rebuild/re-sync strategy) in `_ensure_fts()`.
 2. Align auth gating with JWT configuration requirements:
-   - either derive Clerk domain reliably from configured key(s), or
+   - require both `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET` to enable auth, or
    - disable JWT mode unless required JWKS inputs are present, with explicit startup log/error.
 3. Make pinning end-to-end:
    - add `pinned: bool = False` to `Memory`,

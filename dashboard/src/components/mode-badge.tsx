@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 
 export function ModeBadge() {
   const [isCloud, setIsCloud] = useState(
-    !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+    process.env.NEXT_PUBLIC_AUTH_ENABLED === "true"
   );
 
   useEffect(() => {

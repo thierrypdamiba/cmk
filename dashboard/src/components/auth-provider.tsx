@@ -1,21 +1,20 @@
 "use client";
 
 import { useEffect } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { authClient } from "@/lib/auth-client";
 import { setTokenProvider } from "@/lib/api";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { getToken } = useAuth();
-
   useEffect(() => {
     setTokenProvider(async () => {
       try {
-        return await getToken();
+        const session = await authClient.getSession();
+        return session?.data?.session?.token ?? null;
       } catch {
         return null;
       }
     });
-  }, [getToken]);
+  }, []);
 
   return <>{children}</>;
 }

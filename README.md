@@ -138,7 +138,7 @@ export CMK_FLOW_SKIP_TOOLS=mcp__my-server__my_tool
 ### multi-tenancy
 
 - **Qdrant-level tenant isolation**: `user_id` indexed with `is_tenant=true`, queries only touch that tenant's data segments
-- **Auth stack**: Clerk JWT auth + API keys for the dashboard API
+- **Auth stack**: BetterAuth JWT + API keys for the dashboard API
 - **Per-user data**: every query is scoped to the authenticated user. No cross-tenant leakage.
 
 ## dashboard

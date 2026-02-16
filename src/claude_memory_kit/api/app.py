@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user, is_auth_enabled, LOCAL_USER
 from ..auth_keys import create_api_key, list_keys, revoke_key
-from ..config import get_store_path, is_cloud_mode
+from ..config import get_store_path, is_cloud_mode, get_database_url
 from ..store import Store
 from ..types import IdentityCard
 from ..tools import (
@@ -36,22 +36,25 @@ async def lifespan(app: FastAPI):
     log.info("cmk starting in %s mode", mode)
 
     # Warn about partial auth config
-    sk = os.getenv("CLERK_SECRET_KEY", "")
-    has_sk = bool(sk and not sk.startswith("<"))
-    has_frontend = bool(os.getenv("CLERK_FRONTEND_API") or os.getenv("CLERK_INSTANCE_ID"))
-    if has_sk and not has_frontend:
+    auth_url = os.getenv("BETTER_AUTH_URL", "")
+    auth_secret = os.getenv("BETTER_AUTH_SECRET", "")
+    has_url = bool(auth_url and not auth_url.startswith("<"))
+    has_secret = bool(auth_secret and not auth_secret.startswith("<"))
+    if has_url and not has_secret:
         log.warning(
-            "CLERK_SECRET_KEY is set but CLERK_FRONTEND_API/CLERK_INSTANCE_ID is missing. "
-            "Auth will be disabled. Set one of these to enable auth."
+            "BETTER_AUTH_URL is set but BETTER_AUTH_SECRET is missing. "
+            "Auth will be disabled."
         )
-    elif has_sk and has_frontend:
-        log.info("clerk auth enabled")
+    elif has_url and has_secret:
+        log.info("betterauth enabled")
     else:
         log.info("running without auth (local mode)")
 
     # Initialize store in lifespan, not as a global singleton
     store = Store(get_store_path())
-    store.auth_db.migrate()
+    # Only run SQLite migrations; Postgres schema is managed externally
+    if not get_database_url():
+        store.auth_db.migrate()
     store.qdrant.ensure_collection()
     app.state.store = store
 
