@@ -1,8 +1,9 @@
 """Tests for consolidation: decay scoring and journal digest."""
 
 import math
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -144,40 +145,51 @@ class TestIsFading:
 
 
 # ---------------------------------------------------------------------------
-# digest.py tests
+# digest.py tests (uses mock db since consolidate_journals is duck-typed)
 # ---------------------------------------------------------------------------
 
 
-def _insert_journal_row(db, date_str, gate, content, user_id="local"):
-    """Helper: directly insert a journal row with a specific date."""
-    db.conn.execute(
-        "INSERT INTO journal (date, timestamp, gate, content, user_id) "
-        "VALUES (?, datetime('now'), ?, ?, ?)",
-        (date_str, gate, content, user_id),
-    )
-    db.conn.commit()
+def _make_mock_db(stale_dates=None, entries_by_date=None):
+    """Create a mock db object with journal methods."""
+    db = MagicMock()
+    db.stale_journal_dates.return_value = stale_dates or []
+
+    def _journal_by_date(date, user_id="local"):
+        if entries_by_date:
+            return entries_by_date.get(date, [])
+        return []
+
+    db.journal_by_date.side_effect = _journal_by_date
+    db.insert_journal_raw = MagicMock()
+    db.archive_journal_date = MagicMock()
+    return db
 
 
 class TestConsolidateJournals:
     """Tests for consolidate_journals async function."""
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_no_stale_entries(self, db):
+    async def test_returns_none_when_no_stale_entries(self):
+        db = _make_mock_db()
         result = await consolidate_journals(db, api_key="fake-key", user_id="local")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_entries_are_recent(self, db):
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        _insert_journal_row(db, today, "epistemic", "recent stuff")
+    async def test_returns_none_when_entries_are_recent(self):
+        db = _make_mock_db()  # no stale dates
         result = await consolidate_journals(db, api_key="fake-key", user_id="local")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_consolidates_stale_entries(self, db):
+    async def test_consolidates_stale_entries(self):
         old_date = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
-        _insert_journal_row(db, old_date, "epistemic", "old insight one")
-        _insert_journal_row(db, old_date, "relational", "old relationship note")
+        entries = {
+            old_date: [
+                {"gate": "epistemic", "content": "old insight one"},
+                {"gate": "relational", "content": "old relationship note"},
+            ]
+        }
+        db = _make_mock_db(stale_dates=[old_date], entries_by_date=entries)
 
         with patch(
             "claude_memory_kit.extract._call_anthropic",
@@ -190,9 +202,12 @@ class TestConsolidateJournals:
         assert "Consolidated 1 weeks" in result
 
     @pytest.mark.asyncio
-    async def test_digest_stored_as_journal_entry(self, db):
+    async def test_digest_stored_as_journal_entry(self):
         old_date = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
-        _insert_journal_row(db, old_date, "behavioral", "testing digest storage")
+        entries = {
+            old_date: [{"gate": "behavioral", "content": "testing digest storage"}]
+        }
+        db = _make_mock_db(stale_dates=[old_date], entries_by_date=entries)
 
         with patch(
             "claude_memory_kit.extract._call_anthropic",
@@ -201,18 +216,17 @@ class TestConsolidateJournals:
         ):
             await consolidate_journals(db, api_key="fake-key", user_id="local")
 
-        # Find the digest entry
-        rows = db.conn.execute(
-            "SELECT * FROM journal WHERE gate = 'digest'"
-        ).fetchall()
-        assert len(rows) == 1
-        content = rows[0]["content"]
-        assert "Digest text here." in content
+        db.insert_journal_raw.assert_called_once()
+        call_kwargs = db.insert_journal_raw.call_args
+        assert "Digest text here." in call_kwargs.kwargs.get("content", call_kwargs.args[2] if len(call_kwargs.args) > 2 else "")
 
     @pytest.mark.asyncio
-    async def test_original_entries_archived(self, db):
+    async def test_original_entries_archived(self):
         old_date = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
-        _insert_journal_row(db, old_date, "epistemic", "will be archived")
+        entries = {
+            old_date: [{"gate": "epistemic", "content": "will be archived"}]
+        }
+        db = _make_mock_db(stale_dates=[old_date], entries_by_date=entries)
 
         with patch(
             "claude_memory_kit.extract._call_anthropic",
@@ -221,17 +235,21 @@ class TestConsolidateJournals:
         ):
             await consolidate_journals(db, api_key="fake-key", user_id="local")
 
-        # Original date entries should be gone
-        entries = db.journal_by_date(old_date, user_id="local")
-        assert len(entries) == 0
+        db.archive_journal_date.assert_called_once_with(old_date, user_id="local")
 
     @pytest.mark.asyncio
-    async def test_multiple_weeks_consolidated_separately(self, db):
+    async def test_multiple_weeks_consolidated_separately(self):
         # Two dates in different ISO weeks
         date_week1 = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
         date_week2 = (datetime.now(timezone.utc) - timedelta(days=40)).strftime("%Y-%m-%d")
-        _insert_journal_row(db, date_week1, "epistemic", "week A note")
-        _insert_journal_row(db, date_week2, "behavioral", "week B note")
+        entries = {
+            date_week1: [{"gate": "epistemic", "content": "week A note"}],
+            date_week2: [{"gate": "behavioral", "content": "week B note"}],
+        }
+        db = _make_mock_db(
+            stale_dates=[date_week1, date_week2],
+            entries_by_date=entries,
+        )
 
         with patch(
             "claude_memory_kit.extract._call_anthropic",
@@ -241,19 +259,16 @@ class TestConsolidateJournals:
             result = await consolidate_journals(db, api_key="fake-key", user_id="local")
 
         assert result is not None
-        # Should consolidate 2 weeks (assuming different ISO weeks, which they
-        # will be 10 days apart)
         assert "Consolidated" in result
-        digests = db.conn.execute(
-            "SELECT * FROM journal WHERE gate = 'digest'"
-        ).fetchall()
-        assert len(digests) >= 1
+        assert db.insert_journal_raw.call_count >= 1
 
     @pytest.mark.asyncio
-    async def test_user_isolation(self, db):
+    async def test_user_isolation(self):
         old_date = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
-        _insert_journal_row(db, old_date, "epistemic", "user A data", user_id="user_a")
-        _insert_journal_row(db, old_date, "epistemic", "user B data", user_id="user_b")
+        entries = {
+            old_date: [{"gate": "epistemic", "content": "user A data"}]
+        }
+        db = _make_mock_db(stale_dates=[old_date], entries_by_date=entries)
 
         with patch(
             "claude_memory_kit.extract._call_anthropic",
@@ -263,14 +278,16 @@ class TestConsolidateJournals:
             result = await consolidate_journals(db, api_key="fake-key", user_id="user_a")
 
         assert result is not None
-        # user_b entries should remain untouched
-        entries_b = db.journal_by_date(old_date, user_id="user_b")
-        assert len(entries_b) == 1
+        db.stale_journal_dates.assert_called_with(max_age_days=14, user_id="user_a")
+        db.archive_journal_date.assert_called_with(old_date, user_id="user_a")
 
     @pytest.mark.asyncio
-    async def test_digest_date_key_is_iso_week(self, db):
+    async def test_digest_date_key_is_iso_week(self):
         old_date = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
-        _insert_journal_row(db, old_date, "epistemic", "week key test")
+        entries = {
+            old_date: [{"gate": "epistemic", "content": "week key test"}]
+        }
+        db = _make_mock_db(stale_dates=[old_date], entries_by_date=entries)
 
         with patch(
             "claude_memory_kit.extract._call_anthropic",
@@ -279,26 +296,17 @@ class TestConsolidateJournals:
         ):
             await consolidate_journals(db, api_key="fake-key", user_id="local")
 
-        rows = db.conn.execute(
-            "SELECT date FROM journal WHERE gate = 'digest'"
-        ).fetchall()
-        assert len(rows) == 1
-        # ISO week format: YYYY-Www
-        date_val = rows[0]["date"]
-        assert "-W" in date_val
+        call_kwargs = db.insert_journal_raw.call_args
+        # The date arg should be in ISO week format
+        date_arg = call_kwargs.kwargs.get("date", call_kwargs.args[0] if call_kwargs.args else "")
+        assert "-W" in date_arg
 
     @pytest.mark.asyncio
-    async def test_empty_combined_entries_skipped(self, db):
-        """If a stale date has entries but journal_by_date returns empty,
-        no digest should be written for that week."""
+    async def test_empty_combined_entries_skipped(self):
+        """If stale dates exist but journal_by_date returns empty, no digest."""
         old_date = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
-        _insert_journal_row(db, old_date, "epistemic", "will remove manually")
-        # Manually delete the entry so journal_by_date returns empty,
-        # but stale_journal_dates still returns the date (race condition sim)
-        db.conn.execute("DELETE FROM journal WHERE date = ?", (old_date,))
-        db.conn.commit()
-        # Re-insert as a different date so stale_journal_dates returns something
-        # Actually, with the delete, stale_journal_dates returns nothing. Let's
-        # test the normal "nothing to consolidate" path instead.
+        db = _make_mock_db(stale_dates=[old_date], entries_by_date={old_date: []})
+
         result = await consolidate_journals(db, api_key="fake-key", user_id="local")
         assert result is None
+        db.insert_journal_raw.assert_not_called()

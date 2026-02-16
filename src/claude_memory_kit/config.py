@@ -63,3 +63,38 @@ def get_qdrant_config() -> dict:
 def is_cloud_mode() -> bool:
     cfg = get_qdrant_config()
     return cfg["mode"] == "cloud"
+
+
+# ---- Flow Mode ----
+
+FLOW_CHAR_THRESHOLD = 2000  # ~500 tokens
+
+FLOW_DEFAULT_SKIP_TOOLS = frozenset({
+    "mcp__claude-memory-kit__remember_this",
+    "mcp__claude-memory-kit__recall_memories",
+    "mcp__claude-memory-kit__forget_memory",
+    "mcp__claude-memory-kit__save_checkpoint",
+    "remember_this",
+    "recall_memories",
+    "forget_memory",
+    "save_checkpoint",
+})
+
+
+def is_flow_mode() -> bool:
+    return os.getenv("CMK_FLOW_MODE", "").lower() in ("true", "1", "yes")
+
+
+def get_flow_skip_tools() -> frozenset[str]:
+    extra = os.getenv("CMK_FLOW_SKIP_TOOLS", "")
+    if not extra.strip():
+        return FLOW_DEFAULT_SKIP_TOOLS
+    custom = frozenset(t.strip() for t in extra.split(",") if t.strip())
+    return FLOW_DEFAULT_SKIP_TOOLS | custom
+
+
+def get_flow_char_threshold() -> int:
+    val = os.getenv("CMK_FLOW_THRESHOLD", "")
+    if val.strip().isdigit():
+        return int(val)
+    return FLOW_CHAR_THRESHOLD

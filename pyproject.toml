@@ -1,6 +1,6 @@
 [project]
 name = "claude-memory-kit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Claude Memory Kit (CMK). Persistent memory for Claude. Embedded, zero-server."
 readme = "README.md"
 license = {text = "MIT"}

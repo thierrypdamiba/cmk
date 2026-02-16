@@ -529,11 +529,12 @@ class TestCliAuthCoverageGaps:
 
     def test_check_local_data_hint_with_data(self, monkeypatch, tmp_path, capsys):
         """local data exists, shows hint."""
-        mock_db = MagicMock()
-        mock_db.count_memories.return_value = 5
+        mock_store = MagicMock()
+        mock_store.qdrant.ensure_collection = MagicMock()
+        mock_store.qdrant.count_memories.return_value = 5
 
         with patch("claude_memory_kit.config.get_store_path", return_value=str(tmp_path / "store")), \
-             patch("claude_memory_kit.store.sqlite.SqliteStore", return_value=mock_db):
+             patch("claude_memory_kit.store.Store", return_value=mock_store):
             cli_auth._check_local_data_hint()
 
         captured = capsys.readouterr()
@@ -542,11 +543,12 @@ class TestCliAuthCoverageGaps:
 
     def test_check_local_data_hint_no_data(self, monkeypatch, tmp_path, capsys):
         """count is 0, no hint shown."""
-        mock_db = MagicMock()
-        mock_db.count_memories.return_value = 0
+        mock_store = MagicMock()
+        mock_store.qdrant.ensure_collection = MagicMock()
+        mock_store.qdrant.count_memories.return_value = 0
 
         with patch("claude_memory_kit.config.get_store_path", return_value=str(tmp_path / "store")), \
-             patch("claude_memory_kit.store.sqlite.SqliteStore", return_value=mock_db):
+             patch("claude_memory_kit.store.Store", return_value=mock_store):
             cli_auth._check_local_data_hint()
 
         captured = capsys.readouterr()

@@ -138,6 +138,15 @@ class BulkPrivateRequest(BaseModel):
     level: str | None = Field(None, pattern=SENSITIVITY_PATTERN)
 
 
+class CreateTeamRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class AddMemberRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=500)
+    role: str = Field("member", pattern=r"^(admin|member)$")
+
+
 class SynthesizeRequest(BaseModel):
     system: str = Field(..., max_length=50_000)
     prompt: str = Field(..., max_length=100_000)
@@ -534,6 +543,125 @@ async def delete_rule(rule_id: str, user: dict = Depends(_auth)):
     if not ok:
         raise HTTPException(404, "rule not found")
     return {"result": "deleted"}
+
+
+# ---- Teams ----
+
+def _require_team_member(store: Store, team_id: str, user_id: str) -> None:
+    if not store.auth_db.is_team_member(team_id, user_id):
+        raise HTTPException(403, "not a member of this team")
+
+
+def _require_team_role(store: Store, team_id: str, user_id: str, roles: set) -> str:
+    role = store.auth_db.get_member_role(team_id, user_id)
+    if role not in roles:
+        raise HTTPException(403, f"requires one of: {', '.join(roles)}")
+    return role
+
+
+@router.post("/teams")
+async def create_team(req: CreateTeamRequest, user: dict = Depends(_auth)):
+    store = _get_store()
+    uid = user["id"]
+    team_id = f"team_{uuid.uuid4().hex[:8]}"
+    team = store.auth_db.create_team(team_id, req.name, uid)
+    return {"team": team}
+
+
+@router.get("/teams")
+async def list_teams(user: dict = Depends(_auth)):
+    store = _get_store()
+    teams = store.auth_db.list_user_teams(user["id"])
+    return {"teams": teams}
+
+
+@router.get("/teams/{team_id}")
+async def get_team(team_id: str, user: dict = Depends(_auth)):
+    store = _get_store()
+    _require_team_member(store, team_id, user["id"])
+    team = store.auth_db.get_team(team_id)
+    if not team:
+        raise HTTPException(404, "team not found")
+    members = store.auth_db.list_team_members(team_id)
+    team["members"] = members
+    return {"team": team}
+
+
+@router.delete("/teams/{team_id}")
+async def delete_team(team_id: str, user: dict = Depends(_auth)):
+    store = _get_store()
+    _require_team_role(store, team_id, user["id"], {"owner"})
+    ok = store.auth_db.delete_team(team_id)
+    if not ok:
+        raise HTTPException(404, "team not found")
+    return {"result": "deleted"}
+
+
+@router.post("/teams/{team_id}/members")
+async def add_member(
+    team_id: str, req: AddMemberRequest, user: dict = Depends(_auth)
+):
+    store = _get_store()
+    _require_team_role(store, team_id, user["id"], {"owner", "admin"})
+    store.auth_db.add_team_member(team_id, req.user_id, req.role)
+    return {"member": {"team_id": team_id, "user_id": req.user_id, "role": req.role}}
+
+
+@router.delete("/teams/{team_id}/members/{member_id}")
+async def remove_member(
+    team_id: str, member_id: str, user: dict = Depends(_auth)
+):
+    store = _get_store()
+    uid = user["id"]
+    # Can remove yourself, or admin+ can remove others
+    if member_id != uid:
+        _require_team_role(store, team_id, uid, {"owner", "admin"})
+    ok = store.auth_db.remove_team_member(team_id, member_id)
+    if not ok:
+        raise HTTPException(404, "member not found")
+    return {"result": "removed"}
+
+
+@router.get("/teams/{team_id}/memories")
+async def list_team_memories(
+    team_id: str,
+    limit: int = 50, offset: int = 0,
+    user: dict = Depends(_auth),
+):
+    limit = min(max(1, limit), 500)
+    offset = max(0, offset)
+    store = _get_store()
+    _require_team_member(store, team_id, user["id"])
+    memories = store.qdrant.list_memories(
+        limit, offset, user_id=f"team:{team_id}",
+        visibility="team",
+    )
+    return {"memories": [m.model_dump() for m in memories]}
+
+
+@router.post("/teams/{team_id}/rules")
+async def create_team_rule(
+    team_id: str, req: CreateRuleRequest, user: dict = Depends(_auth)
+):
+    store = _get_store()
+    _require_team_role(store, team_id, user["id"], {"owner", "admin"})
+    rule_id = str(uuid.uuid4())[:12]
+    store.qdrant.insert_rule(
+        rule_id, f"team:{team_id}", req.scope,
+        req.condition, req.enforcement,
+    )
+    rule = store.qdrant.get_rule(rule_id, user_id=f"team:{team_id}")
+    return {"rule": rule}
+
+
+@router.get("/teams/{team_id}/rules")
+async def list_team_rules(
+    team_id: str, user: dict = Depends(_auth)
+):
+    store = _get_store()
+    _require_team_member(store, team_id, user["id"])
+    rules = store.qdrant.list_rules(user_id=f"team:{team_id}")
+    return {"rules": rules}
 
 
 # ---- Mode ----

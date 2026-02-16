@@ -18,10 +18,10 @@ from claude_memory_kit.types import IdentityCard
 def _make_mock_store():
     """Return a MagicMock that looks like Store."""
     store = MagicMock()
-    store.db = MagicMock()
-    store.vectors = MagicMock()
-    store.db.migrate = MagicMock()
-    store.vectors.ensure_collection = MagicMock()
+    store.auth_db = MagicMock()
+    store.qdrant = MagicMock()
+    store.auth_db.migrate = MagicMock()
+    store.qdrant.ensure_collection = MagicMock()
     return store
 
 
@@ -359,8 +359,8 @@ class TestStats:
     def test_stats_with_identity(self):
         runner = CliRunner()
         store = _make_mock_store()
-        store.db.count_memories.return_value = 42
-        store.db.count_by_gate.return_value = {
+        store.qdrant.count_memories.return_value = 42
+        store.qdrant.count_by_gate.return_value = {
             "behavioral": 10,
             "epistemic": 20,
             "relational": 12,
@@ -371,7 +371,7 @@ class TestStats:
             content="developer",
             last_updated=datetime.now(timezone.utc),
         )
-        store.db.get_identity.return_value = ident
+        store.qdrant.get_identity.return_value = ident
         with patch(STORE_PATCH, return_value=store), \
              patch(USER_PATCH, return_value="local"):
             result = runner.invoke(main, ["stats"])
@@ -385,9 +385,9 @@ class TestStats:
     def test_stats_no_identity(self):
         runner = CliRunner()
         store = _make_mock_store()
-        store.db.count_memories.return_value = 0
-        store.db.count_by_gate.return_value = {}
-        store.db.get_identity.return_value = None
+        store.qdrant.count_memories.return_value = 0
+        store.qdrant.count_by_gate.return_value = {}
+        store.qdrant.get_identity.return_value = None
         with patch(STORE_PATCH, return_value=store), \
              patch(USER_PATCH, return_value="local"):
             result = runner.invoke(main, ["stats"])
@@ -399,15 +399,15 @@ class TestStats:
         """Identity exists but person is None."""
         runner = CliRunner()
         store = _make_mock_store()
-        store.db.count_memories.return_value = 5
-        store.db.count_by_gate.return_value = {"epistemic": 5}
+        store.qdrant.count_memories.return_value = 5
+        store.qdrant.count_by_gate.return_value = {"epistemic": 5}
         ident = IdentityCard(
             person=None,
             project="some-project",
             content="notes",
             last_updated=datetime.now(timezone.utc),
         )
-        store.db.get_identity.return_value = ident
+        store.qdrant.get_identity.return_value = ident
         with patch(STORE_PATCH, return_value=store), \
              patch(USER_PATCH, return_value="local"):
             result = runner.invoke(main, ["stats"])
@@ -658,8 +658,8 @@ class TestGetStore:
             MockStore.return_value = mock_instance
             result = _get_store()
         MockStore.assert_called_once_with("/tmp/test-cmk")
-        mock_instance.db.migrate.assert_called_once()
-        mock_instance.vectors.ensure_collection.assert_called_once()
+        mock_instance.auth_db.migrate.assert_called_once()
+        mock_instance.qdrant.ensure_collection.assert_called_once()
         assert result is mock_instance
 
 
@@ -749,12 +749,12 @@ class TestUserIdPropagation:
     def test_stats_passes_user_id(self):
         runner = CliRunner()
         store = _make_mock_store()
-        store.db.count_memories.return_value = 0
-        store.db.count_by_gate.return_value = {}
-        store.db.get_identity.return_value = None
+        store.qdrant.count_memories.return_value = 0
+        store.qdrant.count_by_gate.return_value = {}
+        store.qdrant.get_identity.return_value = None
         with patch(STORE_PATCH, return_value=store), \
              patch(USER_PATCH, return_value="uid_stats"):
             runner.invoke(main, ["stats"])
-        store.db.count_memories.assert_called_once_with(user_id="uid_stats")
-        store.db.count_by_gate.assert_called_once_with(user_id="uid_stats")
-        store.db.get_identity.assert_called_once_with(user_id="uid_stats")
+        store.qdrant.count_memories.assert_called_once_with(user_id="uid_stats")
+        store.qdrant.count_by_gate.assert_called_once_with(user_id="uid_stats")
+        store.qdrant.get_identity.assert_called_once_with(user_id="uid_stats")

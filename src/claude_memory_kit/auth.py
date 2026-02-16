@@ -160,11 +160,13 @@ async def get_current_user(
         "email": claims.get("email"),
         "name": claims.get("name", ""),
         "plan": "free",
+        "teams": [],
     }
     if db:
         stored = db.get_user(claims["id"])
         if stored:
             user["plan"] = stored.get("plan", "free")
+        user["teams"] = db.list_user_teams(claims["id"])
 
     return user
 

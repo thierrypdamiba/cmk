@@ -13,7 +13,7 @@ from fastapi import Request
 
 from claude_memory_kit.types import (
     Gate, DecayClass, Memory, JournalEntry,
-    IdentityCard, OnboardingState, SearchResult, ExtractedMemory,
+    IdentityCard, Visibility, SearchResult, ExtractedMemory,
 )
 from claude_memory_kit import config as config_module
 from claude_memory_kit import auth as auth_module
@@ -140,13 +140,12 @@ class TestIdentityCard:
         assert card.content == "I am a developer"
 
 
-class TestOnboardingState:
-    def test_defaults(self):
-        state = OnboardingState()
-        assert state.step == 0
-        assert state.person is None
-        assert state.project is None
-        assert state.style is None
+class TestVisibility:
+    def test_private_default(self):
+        assert Visibility.private == "private"
+
+    def test_team_value(self):
+        assert Visibility.team == "team"
 
 
 class TestSearchResult:

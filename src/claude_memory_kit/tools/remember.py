@@ -16,6 +16,8 @@ async def do_remember(
     person: str | None = None,
     project: str | None = None,
     user_id: str = "local",
+    visibility: str = "private",
+    team_id: str | None = None,
 ) -> str:
     gate = Gate.from_str(gate_str)
     if gate is None:
@@ -51,7 +53,14 @@ async def do_remember(
     store.qdrant.insert_journal(entry, user_id=user_id)
 
     # 2. Insert memory (full metadata in Qdrant payload)
-    store.qdrant.insert_memory(memory, user_id=user_id)
+    if visibility == "team" and not team_id:
+        return "Cannot save team memory: no team configured. Run 'cmk team join <id>' first."
+    store.qdrant.insert_memory(
+        memory, user_id=user_id,
+        visibility=visibility if visibility != "private" else None,
+        team_id=team_id if visibility == "team" else None,
+        created_by=user_id if visibility == "team" else None,
+    )
 
     # 3. Auto-link (no-op in cloud-only mode)
     store.qdrant.auto_link(mem_id, person, project, user_id=user_id)
@@ -59,7 +68,7 @@ async def do_remember(
     # 4. Contradiction check via vectors
     warning = ""
     try:
-        similar = store.qdrant.search(content, limit=3, user_id=user_id)
+        similar = store.qdrant.search(content, limit=3, user_id=user_id, team_id=team_id)
         for sid, score in similar:
             if sid != mem_id and score > 0.85:
                 existing = store.qdrant.get_memory(sid, user_id=user_id)

@@ -37,8 +37,16 @@ async def _call_cloud_proxy(
     user: str,
     api_key: str,
     max_tokens: int = 4096,
+    model: str | None = None,
 ) -> str:
     """Route synthesis through cmk.dev cloud proxy."""
+    body: dict = {
+        "system": system,
+        "prompt": user,
+        "max_tokens": max_tokens,
+    }
+    if model:
+        body["model"] = model
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             f"{CMK_CLOUD_URL}/api/v1/synthesize",
@@ -46,11 +54,7 @@ async def _call_cloud_proxy(
                 "Authorization": f"Bearer {api_key}",
                 "content-type": "application/json",
             },
-            json={
-                "system": system,
-                "prompt": user,
-                "max_tokens": max_tokens,
-            },
+            json=body,
         )
         if resp.status_code != 200:
             log.error("cloud proxy failed (%d): %s", resp.status_code, resp.text)
@@ -64,9 +68,10 @@ async def _call_anthropic_direct(
     user: str,
     api_key: str,
     max_tokens: int = 4096,
+    model: str | None = None,
 ) -> str:
     """Call Anthropic API directly with a local API key."""
-    model = get_model()
+    model = model or get_model()
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             ANTHROPIC_API_URL,
@@ -94,11 +99,12 @@ async def _call_anthropic(
     user: str,
     api_key: str,
     max_tokens: int = 4096,
+    model: str | None = None,
 ) -> str:
     """Route to cloud proxy or direct Anthropic based on the key type."""
     if api_key.startswith("cmk-sk-"):
-        return await _call_cloud_proxy(system, user, api_key, max_tokens)
-    return await _call_anthropic_direct(system, user, api_key, max_tokens)
+        return await _call_cloud_proxy(system, user, api_key, max_tokens, model=model)
+    return await _call_anthropic_direct(system, user, api_key, max_tokens, model=model)
 
 
 async def extract_memories(

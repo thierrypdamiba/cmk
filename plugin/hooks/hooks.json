@@ -1,0 +1,29 @@
+{
+  "description": "Claude Memory Kit session hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmk prime \"starting new session\" 2>/dev/null || true",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmk flow-hook",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

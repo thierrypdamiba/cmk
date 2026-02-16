@@ -1,12 +1,12 @@
+"""SQLite store for auth data only (users, API keys, teams).
+
+Memory storage moved to Qdrant in v0.2.0. This module retains schema
+migrations for backward compatibility and provides auth-related tables.
+"""
+
 import os
-import json
 import sqlite3
 from datetime import datetime, timezone
-
-from ..types import (
-    Memory, Gate, DecayClass, JournalEntry,
-    IdentityCard, OnboardingState,
-)
 
 
 class SqliteStore:
@@ -17,7 +17,7 @@ class SqliteStore:
         self.conn.row_factory = sqlite3.Row
 
     # Current schema version. Bump when adding new migrations.
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
     def migrate(self) -> None:
         """Run all pending schema migrations in order."""
@@ -28,6 +28,7 @@ class SqliteStore:
             self._migration_3_add_pinned,
             self._migration_4_indexes,
             self._migration_5_fts,
+            self._migration_6_teams,
         ]
         for i, fn in enumerate(migrations, start=1):
             if current < i:
@@ -46,12 +47,7 @@ class SqliteStore:
         ).fetchone()
         if row:
             return row[0]
-        # Detect pre-versioned databases (tables exist but no version row)
-        existing = self.conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='memories'"
-        ).fetchone()
-        return 0 if existing else 0
+        return 0
 
     def _set_schema_version(self, version: int) -> None:
         self.conn.execute(
@@ -59,8 +55,12 @@ class SqliteStore:
             (version,),
         )
 
+    # ------------------------------------------------------------------ #
+    #  Schema migrations (kept for backward compat with existing DBs)     #
+    # ------------------------------------------------------------------ #
+
     def _migration_1_initial_schema(self) -> None:
-        """Create all core tables."""
+        """Create all core tables (legacy memory tables + auth tables)."""
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
@@ -167,7 +167,6 @@ class SqliteStore:
         """)
 
     def _migration_2_add_columns(self) -> None:
-        """Add user_id and sensitivity columns to existing tables."""
         columns = [
             ("memories", "user_id", "TEXT NOT NULL DEFAULT 'local'"),
             ("journal", "user_id", "TEXT NOT NULL DEFAULT 'local'"),
@@ -183,14 +182,12 @@ class SqliteStore:
                 )
 
     def _migration_3_add_pinned(self) -> None:
-        """Add pinned column to memories."""
         if not self._has_column("memories", "pinned"):
             self.conn.execute(
                 "ALTER TABLE memories ADD COLUMN pinned INTEGER DEFAULT 0"
             )
 
     def _migration_4_indexes(self) -> None:
-        """Create all indexes for common query patterns."""
         self.conn.executescript("""
             CREATE INDEX IF NOT EXISTS idx_memories_user
                 ON memories(user_id);
@@ -198,28 +195,23 @@ class SqliteStore:
                 ON journal(user_id);
             CREATE INDEX IF NOT EXISTS idx_archive_user
                 ON archive(user_id);
-
             CREATE INDEX IF NOT EXISTS idx_memories_user_gate_created
                 ON memories(user_id, gate, created DESC);
             CREATE INDEX IF NOT EXISTS idx_memories_user_person
                 ON memories(user_id, person);
             CREATE INDEX IF NOT EXISTS idx_memories_user_project
                 ON memories(user_id, project);
-
             CREATE INDEX IF NOT EXISTS idx_journal_user_date
                 ON journal(user_id, date, timestamp);
-
             CREATE INDEX IF NOT EXISTS idx_edges_user_from
                 ON edges(user_id, from_id);
             CREATE INDEX IF NOT EXISTS idx_edges_user_to
                 ON edges(user_id, to_id);
-
             CREATE INDEX IF NOT EXISTS idx_memories_user_sensitivity
                 ON memories(user_id, sensitivity);
         """)
 
     def _migration_5_fts(self) -> None:
-        """Set up FTS5 virtual table and triggers."""
         fts_exists = self.conn.execute(
             "SELECT name FROM sqlite_master "
             "WHERE type='table' AND name='memories_fts'"
@@ -252,7 +244,6 @@ class SqliteStore:
                 END;
             """)
             return
-        # Ensure update trigger exists for pre-existing FTS setups
         au_exists = self.conn.execute(
             "SELECT name FROM sqlite_master "
             "WHERE type='trigger' AND name='memories_au'"
@@ -270,474 +261,39 @@ class SqliteStore:
                 END;
             """)
 
-    # ---- Memory CRUD ----
+    def _migration_6_teams(self) -> None:
+        """Add teams and team_members tables."""
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS teams (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created TEXT NOT NULL
+            );
 
-    def insert_memory(self, memory: Memory, user_id: str = "local") -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO memories "
-            "(id, created, gate, person, project, confidence, "
-            "last_accessed, access_count, decay_class, content, user_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                memory.id,
-                memory.created.isoformat(),
-                memory.gate.value,
-                memory.person,
-                memory.project,
-                memory.confidence,
-                memory.last_accessed.isoformat(),
-                memory.access_count,
-                memory.decay_class.value,
-                memory.content,
-                user_id,
-            ),
-        )
-        self.conn.commit()
+            CREATE TABLE IF NOT EXISTS team_members (
+                team_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                joined TEXT NOT NULL,
+                PRIMARY KEY (team_id, user_id),
+                FOREIGN KEY (team_id) REFERENCES teams(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_team_members_user
+                ON team_members(user_id);
+        """)
 
-    def get_memory(self, id: str, user_id: str = "local") -> Memory | None:
-        row = self.conn.execute(
-            "SELECT * FROM memories WHERE id = ? AND user_id = ?",
-            (id, user_id),
-        ).fetchone()
-        return self._row_to_memory(row) if row else None
-
-    def list_memories(
-        self, limit: int = 50, offset: int = 0, user_id: str = "local",
-        gate: str | None = None, person: str | None = None,
-        project: str | None = None,
-    ) -> list[Memory]:
-        clauses = ["user_id = ?"]
-        params: list = [user_id]
-        if gate:
-            clauses.append("gate = ?")
-            params.append(gate)
-        if person:
-            clauses.append("person = ?")
-            params.append(person)
-        if project:
-            clauses.append("project = ?")
-            params.append(project)
-        where = " AND ".join(clauses)
-        params.extend([limit, offset])
-        rows = self.conn.execute(
-            f"SELECT * FROM memories WHERE {where} "
-            "ORDER BY created DESC LIMIT ? OFFSET ?",
-            params,
-        ).fetchall()
-        return [self._row_to_memory(r) for r in rows]
-
-    def search_fts(
-        self, query: str, limit: int = 5, user_id: str = "local"
-    ) -> list[Memory]:
-        try:
-            rows = self.conn.execute(
-                "SELECT m.* FROM memories_fts f "
-                "JOIN memories m ON f.rowid = m.rowid "
-                "WHERE memories_fts MATCH ? AND m.user_id = ? "
-                "ORDER BY rank LIMIT ?",
-                (query, user_id, limit),
-            ).fetchall()
-            return [self._row_to_memory(r) for r in rows]
-        except sqlite3.OperationalError:
-            return []
-
-    def touch_memory(self, id: str, user_id: str = "local") -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
-            "UPDATE memories SET access_count = access_count + 1, "
-            "last_accessed = ? WHERE id = ? AND user_id = ?",
-            (now, id, user_id),
-        )
-        self.conn.commit()
-
-    def delete_memory(self, id: str, user_id: str = "local") -> Memory | None:
-        mem = self.get_memory(id, user_id)
-        if mem:
-            self.conn.execute(
-                "DELETE FROM memories WHERE id = ? AND user_id = ?",
-                (id, user_id),
-            )
-            self.conn.commit()
-        return mem
-
-    def update_memory(
-        self, id: str, user_id: str = "local", **kwargs
-    ) -> None:
-        """Update memory fields. Supported: content, gate, person, project."""
-        allowed = {"content", "gate", "person", "project"}
-        updates = {k: v for k, v in kwargs.items() if k in allowed}
-        if not updates:
-            return
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        params = list(updates.values()) + [id, user_id]
-        self.conn.execute(
-            f"UPDATE memories SET {set_clause} "
-            "WHERE id = ? AND user_id = ?",
-            params,
-        )
-        self.conn.commit()
-
-    def set_pinned(
-        self, id: str, pinned: bool, user_id: str = "local"
-    ) -> None:
-        """Set the pinned flag on a memory."""
-        self.conn.execute(
-            "UPDATE memories SET pinned = ? WHERE id = ? AND user_id = ?",
-            (1 if pinned else 0, id, user_id),
-        )
-        self.conn.commit()
-
-    def count_memories(self, user_id: str = "local") -> int:
-        row = self.conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        return row[0] if row else 0
-
-    def count_by_gate(self, user_id: str = "local") -> dict[str, int]:
-        rows = self.conn.execute(
-            "SELECT gate, COUNT(*) FROM memories "
-            "WHERE user_id = ? GROUP BY gate",
-            (user_id,),
-        ).fetchall()
-        return {r[0]: r[1] for r in rows}
-
-    def update_sensitivity(
-        self, id: str, sensitivity: str, reason: str,
-        user_id: str = "local",
-    ) -> None:
-        """Set sensitivity classification on a memory."""
-        self.conn.execute(
-            "UPDATE memories SET sensitivity = ?, sensitivity_reason = ? "
-            "WHERE id = ? AND user_id = ?",
-            (sensitivity, reason, id, user_id),
-        )
-        self.conn.commit()
-
-    def list_memories_by_sensitivity(
-        self, sensitivity: str | None, limit: int = 50,
-        offset: int = 0, user_id: str = "local",
-    ) -> list[Memory]:
-        """List memories filtered by sensitivity. None = unclassified."""
-        if sensitivity == "unclassified" or sensitivity is None:
-            rows = self.conn.execute(
-                "SELECT * FROM memories "
-                "WHERE user_id = ? AND sensitivity IS NULL "
-                "ORDER BY created DESC LIMIT ? OFFSET ?",
-                (user_id, limit, offset),
-            ).fetchall()
-        elif sensitivity == "flagged":
-            rows = self.conn.execute(
-                "SELECT * FROM memories "
-                "WHERE user_id = ? AND sensitivity IN ('sensitive', 'critical') "
-                "ORDER BY created DESC LIMIT ? OFFSET ?",
-                (user_id, limit, offset),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT * FROM memories "
-                "WHERE user_id = ? AND sensitivity = ? "
-                "ORDER BY created DESC LIMIT ? OFFSET ?",
-                (user_id, sensitivity, limit, offset),
-            ).fetchall()
-        return [self._row_to_memory(r) for r in rows]
-
-    def count_by_sensitivity(self, user_id: str = "local") -> dict[str, int]:
-        """Count memories grouped by sensitivity level."""
-        rows = self.conn.execute(
-            "SELECT sensitivity, COUNT(*) FROM memories "
-            "WHERE user_id = ? GROUP BY sensitivity",
-            (user_id,),
-        ).fetchall()
-        counts: dict[str, int] = {}
-        for r in rows:
-            key = r[0] if r[0] else "unclassified"
-            counts[key] = r[1]
-        return counts
-
-    def update_confidence(
-        self, id: str, confidence: float, user_id: str = "local"
-    ) -> None:
-        self.conn.execute(
-            "UPDATE memories SET confidence = ? "
-            "WHERE id = ? AND user_id = ?",
-            (confidence, id, user_id),
-        )
-        self.conn.commit()
-
-    # ---- Journal ----
-
-    def insert_journal(
-        self, entry: JournalEntry, user_id: str = "local"
-    ) -> None:
-        date = entry.timestamp.strftime("%Y-%m-%d")
-        self.conn.execute(
-            "INSERT INTO journal "
-            "(date, timestamp, gate, content, person, project, user_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                date,
-                entry.timestamp.isoformat(),
-                entry.gate.value,
-                entry.content,
-                entry.person,
-                entry.project,
-                user_id,
-            ),
-        )
-        self.conn.commit()
-
-    def insert_journal_raw(
-        self, date: str, gate: Gate, content: str,
-        person: str | None = None, project: str | None = None,
-        user_id: str = "local",
-    ) -> None:
-        """Insert a journal entry with a custom date string (for digests)."""
-        self.conn.execute(
-            "INSERT INTO journal "
-            "(date, timestamp, gate, content, person, project, user_id) "
-            "VALUES (?, datetime('now'), ?, ?, ?, ?, ?)",
-            (date, gate.value, content, person, project, user_id),
-        )
-        self.conn.commit()
-
-    def find_recent_in_context(
-        self, exclude_id: str, cutoff: str,
-        person: str | None, project: str | None,
-        user_id: str = "local",
-    ) -> str | None:
-        """Find the most recent memory id matching person/project within cutoff."""
-        row = self.conn.execute(
-            "SELECT id FROM memories "
-            "WHERE id != ? AND created > ? AND user_id = ? "
-            "AND (person = ? OR project = ?) "
-            "ORDER BY created DESC LIMIT 1",
-            (exclude_id, cutoff, user_id, person or "", project or ""),
-        ).fetchone()
-        return row[0] if row else None
-
-    def recent_journal(
-        self, days: int = 3, user_id: str = "local"
-    ) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT * FROM journal WHERE user_id = ? "
-            "ORDER BY timestamp DESC LIMIT ?",
-            (user_id, days * 20),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-    def journal_by_date(
-        self, date: str, user_id: str = "local"
-    ) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT * FROM journal "
-            "WHERE date = ? AND user_id = ? ORDER BY timestamp",
-            (date, user_id),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-    def stale_journal_dates(
-        self, max_age_days: int = 14, user_id: str = "local"
-    ) -> list[str]:
-        from datetime import timedelta
-        cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=max_age_days)
-        ).strftime("%Y-%m-%d")
-        rows = self.conn.execute(
-            "SELECT DISTINCT date FROM journal "
-            "WHERE date < ? AND user_id = ? ORDER BY date",
-            (cutoff, user_id),
-        ).fetchall()
-        return [r[0] for r in rows]
-
-    def archive_journal_date(
-        self, date: str, user_id: str = "local"
-    ) -> None:
-        self.conn.execute(
-            "DELETE FROM journal WHERE date = ? AND user_id = ?",
-            (date, user_id),
-        )
-        self.conn.commit()
-
-    def latest_checkpoint(self, user_id: str = "local") -> dict | None:
-        """Get the most recent checkpoint journal entry."""
-        row = self.conn.execute(
-            "SELECT * FROM journal "
-            "WHERE gate = ? AND user_id = ? "
-            "ORDER BY timestamp DESC LIMIT 1",
-            (Gate.checkpoint.value, user_id),
-        ).fetchone()
-        if not row:
-            return None
-        return dict(row)
-
-    # ---- Identity ----
-
-    def get_identity(self, user_id: str = "local") -> IdentityCard | None:
-        row = self.conn.execute(
-            "SELECT * FROM identity WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if not row:
-            # Fallback: check old singleton format (id=1)
-            row = self.conn.execute(
-                "SELECT * FROM identity WHERE id = 1"
-            ).fetchone() if self._has_column("identity", "id") else None
-            if not row:
-                return None
-        return IdentityCard(
-            person=row["person"],
-            project=row["project"],
-            content=row["content"],
-            last_updated=datetime.fromisoformat(row["last_updated"]),
-        )
-
-    def set_identity(
-        self, card: IdentityCard, user_id: str = "local"
-    ) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO identity "
-            "(user_id, person, project, content, last_updated) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                user_id, card.person, card.project,
-                card.content, card.last_updated.isoformat(),
-            ),
-        )
-        self.conn.commit()
+    # ------------------------------------------------------------------ #
+    #  Helpers                                                             #
+    # ------------------------------------------------------------------ #
 
     def _has_column(self, table: str, column: str) -> bool:
         cols = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
         return any(c[1] == column for c in cols)
 
-    # ---- Graph edges ----
-
-    def add_edge(
-        self, from_id: str, to_id: str, relation: str,
-        user_id: str = "local",
-    ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
-            "INSERT OR IGNORE INTO edges "
-            "(from_id, to_id, relation, created, user_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (from_id, to_id, relation, now, user_id),
-        )
-        self.conn.commit()
-
-    def find_related(
-        self, memory_id: str, depth: int = 2, user_id: str = "local"
-    ) -> list[dict]:
-        visited = set()
-        current = {memory_id}
-        results = []
-
-        for _ in range(depth):
-            if not current:
-                break
-            placeholders = ",".join("?" for _ in current)
-            params = list(current) * 3 + [user_id]
-            rows = self.conn.execute(
-                f"SELECT e.from_id, e.to_id, e.relation, m.content "
-                f"FROM edges e "
-                f"JOIN memories m ON m.id = CASE "
-                f"  WHEN e.from_id IN ({placeholders}) THEN e.to_id "
-                f"  ELSE e.from_id END "
-                f"WHERE (e.from_id IN ({placeholders}) "
-                f"  OR e.to_id IN ({placeholders})) "
-                f"  AND e.user_id = ?",
-                params,
-            ).fetchall()
-
-            next_level = set()
-            for r in rows:
-                other = r[1] if r[0] in current else r[0]
-                if other not in visited and other != memory_id:
-                    visited.add(other)
-                    next_level.add(other)
-                    preview = r[3][:200] if r[3] else ""
-                    results.append({
-                        "id": other,
-                        "relation": r[2],
-                        "preview": preview,
-                    })
-            current = next_level
-
-        return results
-
-    def auto_link(
-        self, memory_id: str, person: str | None,
-        project: str | None, user_id: str = "local",
-    ) -> None:
-        if person:
-            rows = self.conn.execute(
-                "SELECT id FROM memories "
-                "WHERE person = ? AND id != ? AND user_id = ?",
-                (person, memory_id, user_id),
-            ).fetchall()
-            for r in rows:
-                self.add_edge(memory_id, r[0], "RELATED_TO", user_id)
-
-        if project:
-            rows = self.conn.execute(
-                "SELECT id FROM memories "
-                "WHERE project = ? AND id != ? AND user_id = ?",
-                (project, memory_id, user_id),
-            ).fetchall()
-            for r in rows:
-                self.add_edge(memory_id, r[0], "RELATED_TO", user_id)
-
-    # ---- Onboarding ----
-
-    def get_onboarding(self, user_id: str = "local") -> OnboardingState | None:
-        row = self.conn.execute(
-            "SELECT * FROM onboarding WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if not row:
-            # Fallback: old singleton format
-            row = self.conn.execute(
-                "SELECT * FROM onboarding WHERE id = 1"
-            ).fetchone() if self._has_column("onboarding", "id") else None
-            if not row:
-                return None
-        return OnboardingState(
-            step=row["step"],
-            person=row["person"],
-            project=row["project"],
-            style=row["style"],
-        )
-
-    def set_onboarding(
-        self, state: OnboardingState, user_id: str = "local"
-    ) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO onboarding "
-            "(user_id, step, person, project, style) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (user_id, state.step, state.person, state.project, state.style),
-        )
-        self.conn.commit()
-
-    def delete_onboarding(self, user_id: str = "local") -> None:
-        self.conn.execute(
-            "DELETE FROM onboarding WHERE user_id = ?", (user_id,)
-        )
-        self.conn.commit()
-
-    # ---- Archive ----
-
-    def archive_memory(
-        self, id: str, gate: str, content: str, reason: str,
-        user_id: str = "local",
-    ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
-            "INSERT OR REPLACE INTO archive "
-            "(id, original_gate, content, reason, archived_at, user_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (id, gate, content, reason, now, user_id),
-        )
-        self.conn.commit()
-
-    # ---- Users ----
+    # ------------------------------------------------------------------ #
+    #  Users                                                               #
+    # ------------------------------------------------------------------ #
 
     def upsert_user(
         self, user_id: str, email: str | None = None,
@@ -760,7 +316,9 @@ class SqliteStore:
         ).fetchone()
         return dict(row) if row else None
 
-    # ---- API Keys ----
+    # ------------------------------------------------------------------ #
+    #  API Keys                                                            #
+    # ------------------------------------------------------------------ #
 
     def insert_api_key(
         self, key_id: str, user_id: str, key_hash: str,
@@ -806,153 +364,90 @@ class SqliteStore:
         self.conn.commit()
         return cur.rowcount > 0
 
-    # ---- Rules ----
+    # ------------------------------------------------------------------ #
+    #  Teams                                                               #
+    # ------------------------------------------------------------------ #
 
-    def list_rules(self, user_id: str = "local") -> list[dict]:
+    def create_team(self, team_id: str, name: str, created_by: str) -> dict:
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "INSERT INTO teams (id, name, created_by, created) "
+            "VALUES (?, ?, ?, ?)",
+            (team_id, name, created_by, now),
+        )
+        # Auto-add creator as owner
+        self.conn.execute(
+            "INSERT INTO team_members (team_id, user_id, role, joined) "
+            "VALUES (?, ?, 'owner', ?)",
+            (team_id, created_by, now),
+        )
+        self.conn.commit()
+        return {"id": team_id, "name": name, "created_by": created_by, "created": now}
+
+    def get_team(self, team_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM teams WHERE id = ?", (team_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_user_teams(self, user_id: str) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT * FROM rules WHERE user_id = ? ORDER BY created DESC",
+            "SELECT t.*, tm.role FROM teams t "
+            "JOIN team_members tm ON t.id = tm.team_id "
+            "WHERE tm.user_id = ? ORDER BY t.created DESC",
             (user_id,),
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_rule(self, rule_id: str, user_id: str = "local") -> dict | None:
-        row = self.conn.execute(
-            "SELECT * FROM rules WHERE id = ? AND user_id = ?",
-            (rule_id, user_id),
-        ).fetchone()
-        return dict(row) if row else None
-
-    def insert_rule(
-        self, rule_id: str, user_id: str, scope: str,
-        condition: str, enforcement: str = "suggest",
+    def add_team_member(
+        self, team_id: str, user_id: str, role: str = "member",
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
-            "INSERT INTO rules "
-            "(id, user_id, scope, condition, enforcement, created) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (rule_id, user_id, scope, condition, enforcement, now),
+            "INSERT OR REPLACE INTO team_members (team_id, user_id, role, joined) "
+            "VALUES (?, ?, ?, ?)",
+            (team_id, user_id, role, now),
         )
         self.conn.commit()
 
-    def update_rule(
-        self, rule_id: str, user_id: str = "local", **kwargs
-    ) -> bool:
-        allowed = {"scope", "condition", "enforcement"}
-        updates = {k: v for k, v in kwargs.items() if k in allowed}
-        if not updates:
-            return False
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        params = list(updates.values()) + [rule_id, user_id]
+    def remove_team_member(self, team_id: str, user_id: str) -> bool:
         cur = self.conn.execute(
-            f"UPDATE rules SET {set_clause} "
-            "WHERE id = ? AND user_id = ?",
-            params,
+            "DELETE FROM team_members WHERE team_id = ? AND user_id = ?",
+            (team_id, user_id),
         )
         self.conn.commit()
         return cur.rowcount > 0
 
-    def delete_rule(self, rule_id: str, user_id: str = "local") -> bool:
-        cur = self.conn.execute(
-            "DELETE FROM rules WHERE id = ? AND user_id = ?",
-            (rule_id, user_id),
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
+    def list_team_members(self, team_id: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT tm.user_id, tm.role, tm.joined, u.email, u.name "
+            "FROM team_members tm "
+            "LEFT JOIN users u ON tm.user_id = u.id "
+            "WHERE tm.team_id = ? ORDER BY tm.joined",
+            (team_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
-    def touch_rule(self, rule_id: str, user_id: str = "local") -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    def is_team_member(self, team_id: str, user_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?",
+            (team_id, user_id),
+        ).fetchone()
+        return row is not None
+
+    def get_member_role(self, team_id: str, user_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT role FROM team_members WHERE team_id = ? AND user_id = ?",
+            (team_id, user_id),
+        ).fetchone()
+        return row[0] if row else None
+
+    def delete_team(self, team_id: str) -> bool:
         self.conn.execute(
-            "UPDATE rules SET last_triggered = ? "
-            "WHERE id = ? AND user_id = ?",
-            (now, rule_id, user_id),
+            "DELETE FROM team_members WHERE team_id = ?", (team_id,)
+        )
+        cur = self.conn.execute(
+            "DELETE FROM teams WHERE id = ?", (team_id,)
         )
         self.conn.commit()
-
-    # ---- Migration ----
-
-    def count_user_data(self, user_id: str) -> dict:
-        """Count all data owned by a user_id across tables."""
-        counts = {}
-        for table in ("memories", "journal", "edges", "archive", "rules"):
-            row = self.conn.execute(
-                f"SELECT COUNT(*) FROM {table} WHERE user_id = ?",
-                (user_id,),
-            ).fetchone()
-            counts[table] = row[0] if row else 0
-        # identity and onboarding are single-row per user
-        row = self.conn.execute(
-            "SELECT COUNT(*) FROM identity WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        counts["identity"] = row[0] if row else 0
-        row = self.conn.execute(
-            "SELECT COUNT(*) FROM onboarding WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        counts["onboarding"] = row[0] if row else 0
-        return counts
-
-    def migrate_user_data(self, from_id: str, to_id: str) -> dict:
-        """Move all data from one user_id to another. Returns counts of migrated rows."""
-        counts = {}
-        for table in ("memories", "journal", "edges", "archive", "rules"):
-            cur = self.conn.execute(
-                f"UPDATE {table} SET user_id = ? WHERE user_id = ?",
-                (to_id, from_id),
-            )
-            counts[table] = cur.rowcount
-
-        # Identity: merge or move
-        existing = self.conn.execute(
-            "SELECT COUNT(*) FROM identity WHERE user_id = ?", (to_id,)
-        ).fetchone()
-        if existing and existing[0] > 0:
-            # Target already has identity, delete source
-            self.conn.execute(
-                "DELETE FROM identity WHERE user_id = ?", (from_id,)
-            )
-            counts["identity"] = 0
-        else:
-            cur = self.conn.execute(
-                "UPDATE identity SET user_id = ? WHERE user_id = ?",
-                (to_id, from_id),
-            )
-            counts["identity"] = cur.rowcount
-
-        # Onboarding: same logic
-        existing = self.conn.execute(
-            "SELECT COUNT(*) FROM onboarding WHERE user_id = ?", (to_id,)
-        ).fetchone()
-        if existing and existing[0] > 0:
-            self.conn.execute(
-                "DELETE FROM onboarding WHERE user_id = ?", (from_id,)
-            )
-            counts["onboarding"] = 0
-        else:
-            cur = self.conn.execute(
-                "UPDATE onboarding SET user_id = ? WHERE user_id = ?",
-                (to_id, from_id),
-            )
-            counts["onboarding"] = cur.rowcount
-
-        self.conn.commit()
-        return counts
-
-    # ---- Helpers ----
-
-    def _row_to_memory(self, row: sqlite3.Row) -> Memory:
-        keys = row.keys()
-        return Memory(
-            id=row["id"],
-            created=datetime.fromisoformat(row["created"]),
-            gate=Gate(row["gate"]),
-            person=row["person"],
-            project=row["project"],
-            confidence=row["confidence"],
-            last_accessed=datetime.fromisoformat(row["last_accessed"]),
-            access_count=row["access_count"],
-            decay_class=DecayClass(row["decay_class"]),
-            content=row["content"],
-            pinned=bool(row["pinned"]) if "pinned" in keys else False,
-            sensitivity=row["sensitivity"] if "sensitivity" in keys else None,
-            sensitivity_reason=row["sensitivity_reason"] if "sensitivity_reason" in keys else None,
-        )
+        return cur.rowcount > 0

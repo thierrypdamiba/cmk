@@ -12,6 +12,7 @@ class Gate(str, Enum):
     correction = "correction"
     checkpoint = "checkpoint"  # journal-only: session snapshots
     digest = "digest"          # journal-only: consolidated weekly digests
+    observation = "observation"  # journal-only: compressed tool output from flow mode
 
     @classmethod
     def from_str(cls, s: str) -> "Gate | None":
@@ -45,7 +46,13 @@ class DecayClass(str, Enum):
             Gate.correction: cls.moderate,
             Gate.checkpoint: cls.fast,
             Gate.digest: cls.moderate,
+            Gate.observation: cls.fast,
         }[gate]
+
+
+class Visibility(str, Enum):
+    private = "private"
+    team = "team"
 
 
 class Memory(BaseModel):
@@ -62,6 +69,9 @@ class Memory(BaseModel):
     pinned: bool = False
     sensitivity: str | None = None
     sensitivity_reason: str | None = None
+    visibility: Visibility = Visibility.private
+    team_id: str | None = None
+    created_by: str | None = None
 
 
 class JournalEntry(BaseModel):
@@ -90,10 +100,3 @@ class ExtractedMemory(BaseModel):
     content: str
     person: str | None = None
     project: str | None = None
-
-
-class OnboardingState(BaseModel):
-    step: int = 0
-    person: str | None = None
-    project: str | None = None
-    style: str | None = None

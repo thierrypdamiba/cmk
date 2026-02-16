@@ -784,6 +784,7 @@ class TestDispatch:
             )
             mock_recall.assert_awaited_once_with(
                 mock_store, "python best practices", user_id="user1",
+                team_id=None,
             )
             assert "Found" in result
 
@@ -801,6 +802,7 @@ class TestDispatch:
             )
             mock_forget.assert_awaited_once_with(
                 mock_store, "mem_001", "outdated", user_id="user1",
+                team_id=None,
             )
             assert "Forgotten" in result
 

@@ -8,8 +8,8 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-from .cli_auth import get_user_id
-from .config import get_store_path
+from .cli_auth import get_user_id, get_team_id
+from .config import get_store_path, is_flow_mode
 from .store import Store
 from .tools import (
     do_remember, do_recall, do_reflect,
@@ -112,7 +112,7 @@ def _extract_person_project(text: str) -> tuple[str | None, str | None]:
     return person, project
 
 
-def _build_instructions(store: Store, user_id: str) -> str:
+def _build_instructions(store: Store, user_id: str, team_id: str | None = None) -> str:
     """Build dynamic server instructions with identity card and recent context."""
     parts = [
         "You have persistent memory via Claude Memory Kit (CMK).",
@@ -141,6 +141,24 @@ def _build_instructions(store: Store, user_id: str) -> str:
         "- Your last checkpoint is loaded above at session start.",
     ]
 
+    # Team memory instructions
+    if team_id:
+        parts.append("")
+        parts.append("TEAM MEMORY:")
+        parts.append(f"- You are part of team: {team_id}")
+        parts.append("- By default, memories are private (only you can see them).")
+        parts.append("- Set visibility='team' when saving knowledge the whole team should share.")
+        parts.append("- Recall automatically searches both your private and team memories.")
+        parts.append("- Team memories show a [team] tag in results.")
+
+        # Load team rules alongside personal rules
+        team_rules = store.qdrant.list_rules(user_id=f"team:{team_id}")
+        if team_rules:
+            parts.append("")
+            parts.append("--- Team rules ---")
+            for r in team_rules:
+                parts.append(f"- [{r['scope']}] {r['condition']} ({r['enforcement']})")
+
     # Load identity card if it exists
     identity = store.qdrant.get_identity(user_id=user_id)
     if identity:
@@ -155,15 +173,27 @@ def _build_instructions(store: Store, user_id: str) -> str:
         parts.append("--- Last session checkpoint ---")
         parts.append(checkpoint["content"])
 
-    # Load recent context (last few journal entries, excluding checkpoints)
+    # Load recent context (last few journal entries, excluding checkpoints and observations)
     recent = store.qdrant.recent_journal(days=2, user_id=user_id)
     if recent:
-        non_checkpoint = [e for e in recent if e.get("gate") != "checkpoint"]
+        non_checkpoint = [
+            e for e in recent
+            if e.get("gate") not in ("checkpoint", "observation")
+        ]
         if non_checkpoint:
             parts.append("")
             parts.append("--- Recent context ---")
             for e in non_checkpoint[:8]:
                 parts.append(f"[{e['gate']}] {e['content']}")
+
+    # Flow mode: inject recent observations for session continuity
+    if is_flow_mode() and recent:
+        observations = [e for e in recent if e.get("gate") == "observation"]
+        if observations:
+            parts.append("")
+            parts.append("--- Recent observations (flow mode) ---")
+            for e in observations[:5]:
+                parts.append(e["content"])
 
     return "\n".join(parts)
 
@@ -195,6 +225,11 @@ TOOL_DEFS = [
                 "project": {
                     "type": "string",
                     "description": "Project context (auto-detected if omitted)",
+                },
+                "visibility": {
+                    "type": "string",
+                    "description": "Set to 'team' to share with your team. Default: private.",
+                    "enum": ["private", "team"],
                 },
             },
             "required": ["text"],
@@ -282,11 +317,12 @@ def create_server() -> Server:
     store.auth_db.migrate()
     store.qdrant.ensure_collection()
     user_id = get_user_id()
+    team_id = get_team_id()
 
     # Counters live in the closure, not as module globals
     counters = {"save": 0, "checkpoint": 0}
 
-    instructions = _build_instructions(store, user_id)
+    instructions = _build_instructions(store, user_id, team_id=team_id)
     server = Server("claude-memory-kit", instructions=instructions)
 
     @server.list_tools()
@@ -300,6 +336,7 @@ def create_server() -> Server:
         try:
             result = await _dispatch(
                 store, resolved, arguments, user_id, counters,
+                team_id=team_id,
             )
         except Exception as e:
             log.error("tool %s failed: %s", name, e)
@@ -311,13 +348,14 @@ def create_server() -> Server:
 
 async def _dispatch(
     store: Store, name: str, args: dict, user_id: str,
-    counters: dict,
+    counters: dict, team_id: str | None = None,
 ) -> str:
     if name == "remember_this":
         text = args["text"]
         gate = _auto_gate(text)
         person = args.get("person")
         project = args.get("project")
+        visibility = args.get("visibility", "private")
 
         # Auto-detect person/project if not provided
         if not person or not project:
@@ -329,6 +367,7 @@ async def _dispatch(
 
         result = await do_remember(
             store, text, gate, person, project, user_id=user_id,
+            visibility=visibility, team_id=team_id,
         )
 
         counters["save"] += 1
@@ -358,11 +397,14 @@ async def _dispatch(
         return await do_checkpoint(store, args["summary"], user_id=user_id)
 
     if name == "recall_memories":
-        return await do_recall(store, args["query"], user_id=user_id)
+        return await do_recall(
+            store, args["query"], user_id=user_id, team_id=team_id,
+        )
 
     if name == "forget_memory":
         return await do_forget(
             store, args["id"], args["reason"], user_id=user_id,
+            team_id=team_id,
         )
 
     # Legacy tool names still work through the API/CLI

@@ -43,7 +43,7 @@ from qdrant_client.models import (
 )
 
 from ..config import get_qdrant_config
-from ..types import DecayClass, Gate, IdentityCard, JournalEntry, Memory
+from ..types import DecayClass, Gate, IdentityCard, JournalEntry, Memory, Visibility
 
 log = logging.getLogger("cmk")
 
@@ -66,6 +66,11 @@ def _memory_from_payload(payload: dict) -> Memory:
     """Reconstruct a Memory object from a Qdrant point payload."""
     created_ts = payload.get("created", 0)
     accessed_ts = payload.get("last_accessed", created_ts)
+    vis_str = payload.get("visibility", "private")
+    try:
+        vis = Visibility(vis_str)
+    except ValueError:
+        vis = Visibility.private
     return Memory(
         id=payload.get("memory_id", ""),
         created=datetime.fromtimestamp(created_ts, tz=timezone.utc),
@@ -80,6 +85,9 @@ def _memory_from_payload(payload: dict) -> Memory:
         pinned=payload.get("pinned", False),
         sensitivity=payload.get("sensitivity"),
         sensitivity_reason=payload.get("sensitivity_reason"),
+        visibility=vis,
+        team_id=payload.get("team_id") or None,
+        created_by=payload.get("created_by") or None,
     )
 
 
@@ -196,31 +204,51 @@ class QdrantStore:
             **kwargs,
         )
 
-        self.client.create_payload_index(
-            collection_name=COLLECTION,
-            field_name="content",
-            field_schema=TextIndexParams(
-                type="text", tokenizer=TokenizerType.WORD,
-                min_token_len=2, lowercase=True,
-            ),
-        )
+        self._ensure_indexes()
 
-        for field in ("type", "gate", "sensitivity", "person", "project",
-                       "memory_id", "date", "rule_id"):
+    def _ensure_indexes(self) -> None:
+        """Idempotently create all required payload indexes.
+
+        Safe to call on existing collections. Each call is wrapped in
+        try/except so already-existing indexes don't cause failures.
+        """
+        # Full-text index on content
+        try:
             self.client.create_payload_index(
                 collection_name=COLLECTION,
-                field_name=field,
-                field_schema=KeywordIndexParams(type=KeywordIndexType.KEYWORD),
-            )
-
-        if self._cloud:
-            self.client.create_payload_index(
-                collection_name=COLLECTION,
-                field_name="user_id",
-                field_schema=KeywordIndexParams(
-                    type=KeywordIndexType.KEYWORD, is_tenant=True,
+                field_name="content",
+                field_schema=TextIndexParams(
+                    type="text", tokenizer=TokenizerType.WORD,
+                    min_token_len=2, lowercase=True,
                 ),
             )
+        except Exception:
+            pass
+
+        # Keyword indexes for metadata queries
+        for field in ("type", "gate", "sensitivity", "person", "project",
+                       "memory_id", "date", "rule_id", "team_id", "visibility"):
+            try:
+                self.client.create_payload_index(
+                    collection_name=COLLECTION,
+                    field_name=field,
+                    field_schema=KeywordIndexParams(type=KeywordIndexType.KEYWORD),
+                )
+            except Exception:
+                pass
+
+        # Tenant index for user_id (cloud only)
+        if self._cloud:
+            try:
+                self.client.create_payload_index(
+                    collection_name=COLLECTION,
+                    field_name="user_id",
+                    field_schema=KeywordIndexParams(
+                        type=KeywordIndexType.KEYWORD, is_tenant=True,
+                    ),
+                )
+            except Exception:
+                pass
 
     def ensure_collection(self) -> None:
         if self._disabled:
@@ -230,6 +258,8 @@ class QdrantStore:
             if COLLECTION not in names:
                 self._create_hybrid_collection()
                 log.info("created collection: %s (cloud=%s)", COLLECTION, self._cloud)
+            else:
+                self._ensure_indexes()
         except Exception as e:
             log.warning("collection setup failed: %s. store disabled.", e)
             self.client = None
@@ -282,12 +312,32 @@ class QdrantStore:
             "pinned": memory.pinned,
             "sensitivity": memory.sensitivity,
             "sensitivity_reason": memory.sensitivity_reason,
+            "visibility": memory.visibility.value,
+            "team_id": memory.team_id or "",
+            "created_by": memory.created_by or "",
             "edges": [],
         }
 
-    def insert_memory(self, memory: Memory, user_id: str = "local") -> None:
+    def insert_memory(
+        self,
+        memory: Memory,
+        user_id: str = "local",
+        visibility: str | None = None,
+        team_id: str | None = None,
+        created_by: str | None = None,
+    ) -> None:
         if self._disabled:
             return
+        # Apply team overrides to a copy of the memory
+        if visibility or team_id or created_by:
+            updates = {}
+            if visibility:
+                updates["visibility"] = Visibility(visibility)
+            if team_id:
+                updates["team_id"] = team_id
+            if created_by:
+                updates["created_by"] = created_by
+            memory = memory.model_copy(update=updates)
         point_id = _stable_id(memory.id)
         payload = self._memory_payload(memory, user_id)
         vector = self._make_vector(memory.content)
@@ -316,9 +366,35 @@ class QdrantStore:
         gate: str | None = None,
         person: str | None = None,
         project: str | None = None,
+        team_id: str | None = None,
+        visibility: str | None = None,
     ) -> list[Memory]:
         if self._disabled:
             return []
+
+        if team_id and not visibility:
+            # Combined view: private + team
+            base_filter = self._build_memory_filter(user_id=user_id, team_id=team_id)
+            extra_must = []
+            if gate:
+                extra_must.append(FieldCondition(key="gate", match=MatchValue(value=gate)))
+            if person:
+                extra_must.append(FieldCondition(key="person", match=MatchValue(value=person)))
+            if project:
+                extra_must.append(FieldCondition(key="project", match=MatchValue(value=project)))
+            combined_must = list(base_filter.must or []) + extra_must
+            scroll_filter = Filter(must=combined_must, should=base_filter.should)
+            fetch_limit = offset + limit
+            results, _ = self.client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=scroll_filter,
+                limit=fetch_limit,
+                with_payload=True,
+                with_vectors=False,
+                order_by=OrderBy(key="created", direction="desc"),
+            )
+            return [_memory_from_payload(p.payload) for p in results[offset:]]
+
         conditions = [
             FieldCondition(key="type", match=MatchValue(value="memory")),
             FieldCondition(key="user_id", match=MatchValue(value=user_id)),
@@ -329,6 +405,10 @@ class QdrantStore:
             conditions.append(FieldCondition(key="person", match=MatchValue(value=person)))
         if project:
             conditions.append(FieldCondition(key="project", match=MatchValue(value=project)))
+        if visibility:
+            conditions.append(FieldCondition(key="visibility", match=MatchValue(value=visibility)))
+        if team_id:
+            conditions.append(FieldCondition(key="team_id", match=MatchValue(value=team_id)))
 
         # Fetch offset + limit, then skip offset on client side
         fetch_limit = offset + limit
@@ -520,20 +600,39 @@ class QdrantStore:
     #  Search                                                              #
     # ------------------------------------------------------------------ #
 
+    def _build_memory_filter(
+        self, user_id: str | None = None, team_id: str | None = None,
+    ) -> Filter:
+        """Build a filter for memory queries, optionally combining private + team."""
+        must = [FieldCondition(key="type", match=MatchValue(value="memory"))]
+
+        if user_id and team_id:
+            # Combined: my private memories OR my team's shared memories
+            return Filter(
+                must=must,
+                should=[
+                    Filter(must=[
+                        FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                        FieldCondition(key="visibility", match=MatchValue(value="private")),
+                    ]),
+                    Filter(must=[
+                        FieldCondition(key="team_id", match=MatchValue(value=team_id)),
+                        FieldCondition(key="visibility", match=MatchValue(value="team")),
+                    ]),
+                ],
+            )
+        if user_id:
+            must.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
+        return Filter(must=must)
+
     def search(
         self, query: str, limit: int = 5, user_id: str | None = None,
+        team_id: str | None = None,
     ) -> list[tuple[str, float]]:
         if self._disabled:
             return []
 
-        must_conditions = [
-            FieldCondition(key="type", match=MatchValue(value="memory")),
-        ]
-        if user_id:
-            must_conditions.append(
-                FieldCondition(key="user_id", match=MatchValue(value=user_id))
-            )
-        query_filter = Filter(must=must_conditions)
+        query_filter = self._build_memory_filter(user_id=user_id, team_id=team_id)
 
         if self._cloud:
             dense_query = self._jina_doc(query, task="retrieval.query")
@@ -559,30 +658,36 @@ class QdrantStore:
 
     def search_text(
         self, query: str, limit: int = 5, user_id: str | None = None,
+        team_id: str | None = None,
     ) -> list[tuple[str, float]]:
         if self._disabled:
             return []
-        must = [
-            FieldCondition(key="type", match=MatchValue(value="memory")),
-            FieldCondition(key="content", match=MatchText(text=query)),
-        ]
-        if user_id:
-            must.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
+        base_filter = self._build_memory_filter(user_id=user_id, team_id=team_id)
+        # Add text match to the must conditions
+        text_cond = FieldCondition(key="content", match=MatchText(text=query))
+        combined_must = list(base_filter.must or []) + [text_cond]
+        scroll_filter = Filter(must=combined_must, should=base_filter.should)
         results, _ = self.client.scroll(
             collection_name=COLLECTION,
-            scroll_filter=Filter(must=must),
+            scroll_filter=scroll_filter,
             limit=limit,
             with_payload=True,
             with_vectors=False,
         )
         return [(p.payload.get("memory_id", ""), 1.0) for p in results]
 
-    def search_fts(self, query: str, limit: int = 10, user_id: str = "local") -> list[Memory]:
+    def search_fts(
+        self, query: str, limit: int = 10, user_id: str = "local",
+        team_id: str | None = None,
+    ) -> list[Memory]:
         """Full-text search returning Memory objects (replaces SQLite FTS5)."""
-        hits = self.search_text(query, limit=limit, user_id=user_id)
+        hits = self.search_text(query, limit=limit, user_id=user_id, team_id=team_id)
         results = []
         for mid, _ in hits:
             mem = self.get_memory(mid, user_id)
+            if mem is None and team_id:
+                # Try team lookup if private lookup failed
+                mem = self.get_memory(mid, user_id=f"team:{team_id}")
             if mem:
                 results.append(mem)
         return results

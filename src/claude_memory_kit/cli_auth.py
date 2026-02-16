@@ -55,6 +55,17 @@ def get_api_key() -> str | None:
     return os.getenv("CMK_API_KEY")
 
 
+def get_team_id() -> str | None:
+    """Resolve team_id: CMK_TEAM_ID env > credentials.json > None."""
+    env_id = os.getenv("CMK_TEAM_ID")
+    if env_id:
+        return env_id
+    creds = load_credentials()
+    if creds and creds.get("team_id"):
+        return creds["team_id"]
+    return None
+
+
 class _CallbackHandler(BaseHTTPRequestHandler):
     """Handle the OAuth callback from Clerk."""
 
@@ -141,10 +152,10 @@ def _check_local_data_hint() -> None:
     """Show hint if there's unclaimed local data after login."""
     try:
         from .config import get_store_path
-        from .store.sqlite import SqliteStore
-        db = SqliteStore(get_store_path())
-        db.migrate()
-        count = db.count_memories(user_id="local")
+        from .store import Store
+        store = Store(get_store_path())
+        store.qdrant.ensure_collection()
+        count = store.qdrant.count_memories(user_id="local")
         if count > 0:
             click.echo()
             click.echo(f"You have {count} local memories that aren't linked to your account.")

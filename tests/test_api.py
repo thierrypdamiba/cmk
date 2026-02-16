@@ -798,3 +798,136 @@ def test_synthesize_validation_error(client, monkeypatch):
         "max_tokens": 99999,
     })
     assert resp.status_code == 422
+
+
+# ---- Team API Tests ----
+
+class TestTeamAPI:
+    def test_create_team(self, client):
+        resp = client.post("/api/teams", json={"name": "Test Team"})
+        assert resp.status_code == 200
+        data = resp.json()["team"]
+        assert data["name"] == "Test Team"
+        assert data["id"].startswith("team_")
+
+    def test_list_teams(self, client):
+        # Create a team first
+        client.post("/api/teams", json={"name": "My Team"})
+        resp = client.get("/api/teams")
+        assert resp.status_code == 200
+        teams = resp.json()["teams"]
+        assert len(teams) >= 1
+        assert any(t["name"] == "My Team" for t in teams)
+
+    def test_get_team_detail(self, client):
+        create_resp = client.post("/api/teams", json={"name": "Detail Team"})
+        team_id = create_resp.json()["team"]["id"]
+
+        resp = client.get(f"/api/teams/{team_id}")
+        assert resp.status_code == 200
+        team = resp.json()["team"]
+        assert team["name"] == "Detail Team"
+        assert "members" in team
+        assert len(team["members"]) == 1  # owner
+
+    def test_get_team_not_member(self, client, setup_store):
+        # Create a team as a different user
+        setup_store.auth_db.create_team("team_other", "Other", "other_user")
+        resp = client.get("/api/teams/team_other")
+        assert resp.status_code == 403
+
+    def test_delete_team(self, client):
+        create_resp = client.post("/api/teams", json={"name": "Delete Me"})
+        team_id = create_resp.json()["team"]["id"]
+
+        resp = client.delete(f"/api/teams/{team_id}")
+        assert resp.status_code == 200
+        assert resp.json()["result"] == "deleted"
+
+    def test_delete_team_not_owner(self, client, setup_store):
+        # Create team owned by someone else, add local as member
+        setup_store.auth_db.create_team("team_notmine", "Not Mine", "other_user")
+        setup_store.auth_db.add_team_member("team_notmine", "local", "member")
+
+        resp = client.delete("/api/teams/team_notmine")
+        assert resp.status_code == 403
+
+    def test_add_member(self, client):
+        create_resp = client.post("/api/teams", json={"name": "Invite Team"})
+        team_id = create_resp.json()["team"]["id"]
+
+        resp = client.post(
+            f"/api/teams/{team_id}/members",
+            json={"user_id": "new_user", "role": "member"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["member"]["user_id"] == "new_user"
+
+    def test_add_member_not_admin(self, client, setup_store):
+        setup_store.auth_db.create_team("team_noadmin", "No Admin", "other_user")
+        setup_store.auth_db.add_team_member("team_noadmin", "local", "member")
+
+        resp = client.post(
+            "/api/teams/team_noadmin/members",
+            json={"user_id": "another", "role": "member"},
+        )
+        assert resp.status_code == 403
+
+    def test_remove_member(self, client):
+        create_resp = client.post("/api/teams", json={"name": "Remove Team"})
+        team_id = create_resp.json()["team"]["id"]
+        client.post(
+            f"/api/teams/{team_id}/members",
+            json={"user_id": "removable", "role": "member"},
+        )
+
+        resp = client.delete(f"/api/teams/{team_id}/members/removable")
+        assert resp.status_code == 200
+
+    def test_remove_self(self, client, setup_store):
+        setup_store.auth_db.create_team("team_selfleave", "Self Leave", "other_user")
+        setup_store.auth_db.add_team_member("team_selfleave", "local", "member")
+
+        resp = client.delete("/api/teams/team_selfleave/members/local")
+        assert resp.status_code == 200
+
+    def test_list_team_memories(self, client, setup_store):
+        create_resp = client.post("/api/teams", json={"name": "Mem Team"})
+        team_id = create_resp.json()["team"]["id"]
+
+        # Insert a team memory directly
+        mem = _make_memory(id="mem_team_001", content="shared knowledge")
+        setup_store.qdrant.insert_memory(
+            mem, user_id=f"team:{team_id}",
+            visibility="team", team_id=team_id, created_by="local",
+        )
+
+        resp = client.get(f"/api/teams/{team_id}/memories")
+        assert resp.status_code == 200
+        memories = resp.json()["memories"]
+        assert len(memories) >= 1
+
+    def test_create_team_rule(self, client):
+        create_resp = client.post("/api/teams", json={"name": "Rule Team"})
+        team_id = create_resp.json()["team"]["id"]
+
+        resp = client.post(
+            f"/api/teams/{team_id}/rules",
+            json={"scope": "global", "condition": "always be kind", "enforcement": "suggest"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["rule"] is not None
+
+    def test_list_team_rules(self, client):
+        create_resp = client.post("/api/teams", json={"name": "List Rules Team"})
+        team_id = create_resp.json()["team"]["id"]
+
+        client.post(
+            f"/api/teams/{team_id}/rules",
+            json={"scope": "global", "condition": "test rule", "enforcement": "enforce"},
+        )
+
+        resp = client.get(f"/api/teams/{team_id}/rules")
+        assert resp.status_code == 200
+        rules = resp.json()["rules"]
+        assert len(rules) >= 1
