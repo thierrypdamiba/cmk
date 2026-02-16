@@ -151,6 +151,7 @@ class SynthesizeRequest(BaseModel):
     system: str = Field(..., max_length=50_000)
     prompt: str = Field(..., max_length=100_000)
     max_tokens: int = Field(4096, ge=1, le=8192)
+    model: str | None = Field(None, max_length=100)
 
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -228,7 +229,7 @@ async def synthesize(req: SynthesizeRequest, user: dict = Depends(_auth)):
                     "content-type": "application/json",
                 },
                 json={
-                    "model": ANTHROPIC_MODEL,
+                    "model": req.model or ANTHROPIC_MODEL,
                     "max_tokens": req.max_tokens,
                     "system": req.system,
                     "messages": [{"role": "user", "content": req.prompt}],
