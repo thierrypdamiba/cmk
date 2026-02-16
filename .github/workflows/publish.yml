@@ -88,3 +88,20 @@ jobs:
 
       - name: publish to pypi
         run: uv publish --token ${{ secrets.PYPI_TOKEN }} dist/*
+
+      - name: wait for pypi index
+        run: sleep 30
+
+      - name: install from pypi and smoke test
+        run: |
+          VERSION=${{ needs.check-version.outputs.version }}
+          uv pip install --system "claude-memory-kit==$VERSION"
+          python -c "
+          from claude_memory_kit import __version__
+          from claude_memory_kit.store.qdrant_store import QdrantStore
+          from claude_memory_kit.store import Store
+          from claude_memory_kit.server import create_server, TOOL_DEFS
+          assert len(TOOL_DEFS) == 4
+          assert __version__ == '$VERSION'
+          print(f'prod smoke test passed: v{__version__}')
+          "
